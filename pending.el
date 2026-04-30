@@ -388,6 +388,19 @@ resolve was suppressed."
           t)
       (setf (pending-in-resolve p) nil)))))
 
+(defun pending--format-reason (reason)
+  "Render REASON as user-visible text.
+REASON may be a string, symbol, keyword, or nil.  Strings are returned
+verbatim; keywords have their leading colon stripped; other symbols
+are rendered as their name; nil renders as the empty string; anything
+else is formatted with %S."
+  (cond
+   ((null reason) "")
+   ((stringp reason) reason)
+   ((keywordp reason) (substring (symbol-name reason) 1))
+   ((symbolp reason) (symbol-name reason))
+   (t (format "%S" reason))))
+
 (defun pending--on-kill-buffer ()
   "Cancel every pending placeholder living in the buffer being killed.
 Installed buffer-locally on `kill-buffer-hook' by `pending--register'.
@@ -463,7 +476,7 @@ position falls outside BUFFER's bounds."
          (resolved-indicator (or indicator :spinner))
          (resolved-spinner (or spinner-style pending-default-spinner-style))
          (resolved-face (or face 'pending-face))
-         (inhibit-read-only pending-allow-read-only)
+         (inhibit-read-only (or inhibit-read-only pending-allow-read-only))
          start-marker
          end-marker)
     (with-current-buffer buffer
@@ -493,11 +506,11 @@ position falls outside BUFFER's bounds."
             (signal 'pending-error (list "START after END" s e)))
           (setq start-marker (copy-marker s nil))
           (setq end-marker (copy-marker e nil))))))
+    ;; Front- and rear-advance both nil for now; Phase 6 will flip the
+    ;; rear when streaming begins.
     (let* ((ov (make-overlay (marker-position start-marker)
                              (marker-position end-marker)
-                             buffer
-                             nil ; front-advance: no
-                             t)) ; rear-advance: yes (per prompt)
+                             buffer))
            (p (pending--make-struct
                :id id
                :group group
@@ -531,7 +544,9 @@ position falls outside BUFFER's bounds."
                              (pending-label p)
                              (pending-status p))))
       (pending--register p)
-      (when (numberp deadline)
+      ;; Skip silently if DEADLINE is non-positive — "ignore" semantics
+      ;; rather than signalling on every miscall.
+      (when (and (numberp deadline) (> deadline 0))
         (setf (pending-attached-timer p)
               (run-at-time
                deadline nil
@@ -566,7 +581,10 @@ success, or nil if P was already terminal.
 Side effects mirror `pending-resolve' (removes overlay, clears
 markers, unregisters, cancels timer, runs `on-resolve')."
   (let ((text (or replacement-text
-                  (format "✗ %s" (or reason "Failed")))))
+                  (format "✗ %s"
+                          (if reason
+                              (pending--format-reason reason)
+                            "Failed")))))
     (pending--resolve-internal p :rejected reason text
                                'pending-error-face t)))
 
@@ -615,7 +633,7 @@ Return t on success, or nil if P was already terminal."
         (setf (pending-in-resolve p) nil))
       (pending--resolve-internal
        p :cancelled effective-reason
-       (format "✗ %s" effective-reason)
+       (format "✗ %s" (pending--format-reason effective-reason))
        'pending-cancelled-face t)))))
 
 
@@ -674,15 +692,17 @@ If BUFFER is non-nil, restrict the result to placeholders whose
 buffer is BUFFER.  If GROUP is non-nil, restrict to placeholders
 whose `group' slot is `eq' to GROUP.
 
-Order within the result is unspecified."
+Only placeholders for which `pending-active-p' returns non-nil are
+included.  Order within the result is unspecified."
   (let ((acc nil))
     (maphash
      (lambda (_id p)
-       (when (and (or (null buffer) (eq (pending-buffer p) buffer))
+       (when (and (pending-active-p p)
+                  (or (null buffer) (eq (pending-buffer p) buffer))
                   (or (null group)  (eq (pending-group p)  group)))
          (push p acc)))
      pending--registry)
-    acc))
+    (nreverse acc)))
 
 
 (provide 'pending)

@@ -21,6 +21,10 @@
 
 (require 'ert)
 (require 'pending)
+;; `warning-minimum-log-level' is declared in `warnings'; loading the
+;; library here makes its `defvar' visible so the `let' bindings below
+;; suppress library warnings instead of creating an inert lexical.
+(require 'warnings)
 
 
 ;;; Test harness
@@ -234,6 +238,90 @@ tests cannot leak in."
          (should (eq (pending-status p) :scheduled))
          ;; Cleanup: resolve so the registry empties.
          (pending-resolve p "done"))))))
+
+
+;;; Phase 2 — adopt mode and deadline timer
+
+(ert-deftest pending-test/pending-make-adopt-mode ()
+  "Adopt mode wraps an existing region without inserting new text.
+The overlay is anchored at the supplied START and END markers and
+the placeholder lifecycle is otherwise normal."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*pending-test/adopt*")
+     (with-current-buffer buf
+       (insert "Before:")
+       (let ((s (point)))
+         (insert "adopt")
+         (let* ((e (point))
+                (_ (insert ":After"))
+                (text-before (buffer-string))
+                (p (pending-make buf
+                                 :label "X"
+                                 :start (copy-marker s nil)
+                                 :end   (copy-marker e nil))))
+           ;; Adopting must not insert any new characters.
+           (should (equal (buffer-string) text-before))
+           (should (eq (pending-status p) :scheduled))
+           ;; The overlay covers exactly the adopted region.
+           (let ((ov (pending-overlay p)))
+             (should (overlayp ov))
+             (should (= (overlay-start ov) s))
+             (should (= (overlay-end ov) e)))
+           ;; And resolve replaces only that range.
+           (pending-resolve p "ADOPTED")
+           (should (equal (buffer-string) "Before:ADOPTED:After"))))))))
+
+(ert-deftest pending-test/deadline-rejects-timed-out ()
+  "A short deadline auto-rejects the placeholder with `:timed-out'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*pending-test/deadline*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X" :deadline 0.05)))
+         ;; `sit-for' processes timers; `sleep-for' does not.
+         (sit-for 0.2)
+         (should (eq (pending-status p) :rejected))
+         (should (eq (pending-reason p) :timed-out)))))))
+
+
+;;; Phase 2 — re-entrancy and on-resolve coverage
+
+(ert-deftest pending-test/cancel-reentry-is-safe ()
+  "Re-entrant `pending-cancel' from inside on-cancel is a safe no-op.
+A buggy callback that calls `pending-cancel' on the same struct must
+not recurse into another full cancel — the in-resolve guard turns it
+into a no-op so we run the user callback exactly once."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*pending-test/cancel-reentry*")
+     (with-current-buffer buf
+       (let* ((calls 0)
+              (p (pending-make
+                  buf
+                  :label "X"
+                  :on-cancel (lambda (pp)
+                               (cl-incf calls)
+                               ;; Recursive call should be a safe no-op.
+                               (pending-cancel pp :nested)))))
+         (pending-cancel p :outer)
+         (should (eq (pending-status p) :cancelled))
+         (should (= calls 1)))))))
+
+(ert-deftest pending-test/on-resolve-fires-for-all-terminals ()
+  "ON-RESOLVE callback fires once for :resolved, :rejected, :cancelled."
+  (pending-test--with-fresh-registry
+   (dolist (case '((resolve . :resolved)
+                   (reject  . :rejected)
+                   (cancel  . :cancelled)))
+     (pending-test--with-buffer (buf "*p-or*")
+       (with-current-buffer buf
+         (let* ((calls 0)
+                (p (pending-make buf :label "X"
+                                 :on-resolve (lambda (_) (cl-incf calls)))))
+           (pcase (car case)
+             ('resolve (pending-resolve p "ok"))
+             ('reject  (pending-reject  p "bad"))
+             ('cancel  (pending-cancel  p)))
+           (should (= calls 1))
+           (should (eq (pending-status p) (cdr case)))))))))
 
 
 (provide 'pending-test)
