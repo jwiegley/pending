@@ -379,7 +379,8 @@ resolve was suppressed."
           ;; Strip animation decorations before swapping the region
           ;; so the spinner glyph (Phase 3) does not survive into the
           ;; resolved text.  No-op when the slot was never set.
-          (when (overlayp (pending-overlay p))
+          (when (and (overlayp (pending-overlay p))
+                     (overlay-buffer (pending-overlay p)))
             (overlay-put (pending-overlay p) 'before-string nil)
             (overlay-put (pending-overlay p) 'after-string nil))
           (pending--swap-region p new-text face)
@@ -486,7 +487,7 @@ Sets the overlay's `before-string' to the spinner glyph for the
 current frame.  No-op if the overlay has been deleted, and no-op if
 the chosen frame has not advanced since the last render."
   (let ((ov (pending-overlay p)))
-    (when (overlayp ov)
+    (when (and (overlayp ov) (overlay-buffer ov))
       (let* ((frames (pending--get-frames
                       (or (pending-spinner-style p)
                           pending-default-spinner-style)))
@@ -495,9 +496,7 @@ the chosen frame has not advanced since the last render."
           (let ((glyph (aref frames frame)))
             (overlay-put
              ov 'before-string
-             (concat
-              (propertize glyph 'face 'pending-spinner-face)
-              " ")))
+             (propertize (concat glyph " ") 'face 'pending-spinner-face)))
           (setf (pending-last-frame p) frame))))))
 
 (defun pending--ensure-timer ()
@@ -505,7 +504,7 @@ the chosen frame has not advanced since the last render."
 Idempotent: a no-op when the timer is already live."
   (unless (and pending--global-timer (timerp pending--global-timer))
     (setq pending--global-timer
-          (run-with-timer 0 (/ 1.0 pending-fps) #'pending--tick))))
+          (run-with-timer 0 (/ 1.0 (max 1 pending-fps)) #'pending--tick))))
 
 (defun pending--park-timer ()
   "Cancel the global animation timer.
@@ -518,23 +517,22 @@ the timer is already nil."
 
 (defun pending--tick ()
   "Drive one animation frame across all registered placeholders.
-Walks `pending--registry' once.  Each entry is rendered if it is
-active and visible; entries that are merely active but invisible keep
-the timer alive without being drawn.  Once no entry needs rendering
-or to be kept, the timer parks itself.
+Renders visible active placeholders.  Parks the global timer if no
+active placeholder is currently in a visible window — the
+`window-buffer-change-functions' hook re-arms it when one becomes
+visible.
 
 Per-render errors are caught with `with-demoted-errors' so a buggy
 render path on one placeholder cannot kill the timer for everyone."
-  (let ((any-active nil))
+  (let ((any-visible nil))
     (maphash
      (lambda (_id p)
-       (when (pending-active-p p)
-         (setq any-active t)
-         (when (pending--needs-redraw-p p)
-           (with-demoted-errors "pending--tick render error: %S"
-             (pending--render p)))))
+       (when (pending--needs-redraw-p p)
+         (setq any-visible t)
+         (with-demoted-errors "pending--tick render error: %S"
+           (pending--render p))))
      pending--registry)
-    (unless any-active
+    (unless any-visible
       (pending--park-timer))))
 
 (defun pending--on-window-buffer-change (_window-or-frame)
@@ -852,6 +850,22 @@ included.  Order within the result is unspecified."
          (push p acc)))
      pending--registry)
     (nreverse acc)))
+
+
+;;; Unload cleanup
+
+(defun pending-unload-function ()
+  "Tear down `pending' global state on `unload-feature'.
+Called automatically by `unload-feature'.  Removes the
+`window-buffer-change-functions' hook and cancels the global
+animation timer.  Returning nil lets `unload-feature' continue with
+its standard cleanup of symbols defined in this file."
+  (remove-hook 'window-buffer-change-functions
+               #'pending--on-window-buffer-change)
+  (when (timerp pending--global-timer)
+    (cancel-timer pending--global-timer))
+  (setq pending--global-timer nil)
+  nil)
 
 
 (provide 'pending)

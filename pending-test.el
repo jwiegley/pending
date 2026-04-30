@@ -411,19 +411,46 @@ cancelled and `pending--global-timer' is nil."
 
 (ert-deftest pending-test/render-skips-when-buffer-hidden ()
   "`pending--tick' does not render when the buffer is not visible.
-The placeholder remains in the registry, but `last-frame' stays nil."
+The placeholder remains in the registry, but `last-frame' stays nil.
+With the tighter \"park on no visible\" semantics, the global timer
+parks even though an active placeholder lingers — it is re-armed by
+the `window-buffer-change-functions' hook when the buffer becomes
+visible again."
   (pending-test--with-fresh-registry
    ;; A fresh, undisplayed buffer is not in any window.
    (pending-test--with-buffer (buf "*pending-test/hidden*")
      (with-current-buffer buf
        (let ((p (pending-make buf :label "X")))
          (should (null (get-buffer-window buf 'visible)))
+         ;; `pending-make' just armed the timer.
+         (should (timerp pending--global-timer))
          (pending--tick)
          (should (null (pending-last-frame p)))
          (should (null (overlay-get (pending-overlay p) 'before-string)))
          ;; The struct is still registered; the timer just chose not
          ;; to draw it this tick.
-         (should (= 1 (hash-table-count pending--registry))))))))
+         (should (= 1 (hash-table-count pending--registry)))
+         ;; Tighter tick semantics: no visible placeholder → park.
+         (should-not pending--global-timer))))))
+
+(ert-deftest pending-test/unload-function-cleans-up ()
+  "`pending-unload-function' removes the hook and cancels the timer."
+  (pending-test--with-fresh-registry
+   (let ((on-hook (memq #'pending--on-window-buffer-change
+                        window-buffer-change-functions)))
+     ;; Ensure the hook is registered before unload (it is at top-level load).
+     (should on-hook))
+   ;; Calling the unload function (without actually unloading) should
+   ;; remove the hook and cancel the timer.
+   (pending--ensure-timer)
+   (should (timerp pending--global-timer))
+   (pending-unload-function)
+   (should-not (memq #'pending--on-window-buffer-change
+                     window-buffer-change-functions))
+   (should-not pending--global-timer)
+   ;; Restore the hook so subsequent tests still work.
+   (add-hook 'window-buffer-change-functions
+             #'pending--on-window-buffer-change)))
 
 (ert-deftest pending-test/get-frames-fallback ()
   "`pending--get-frames' returns a vector for known keys and unknowns.
