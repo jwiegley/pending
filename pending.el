@@ -39,14 +39,17 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides Phase 2: the core lifecycle.  On top
-;; of the Phase 1 skeleton (customization group, faces, struct, error
-;; symbol, registries), it implements `pending-make' (insert and adopt
-;; modes), `pending-resolve', `pending-reject', `pending-cancel',
-;; `pending-update', the public predicates and accessors, the global
-;; and buffer-local registry mutators, and the `kill-buffer-hook'
-;; teardown.  Animation, streaming, edit-survival, the interactive
-;; lister, and process integration are still to come.
+;; This file currently provides Phase 3: the core lifecycle plus
+;; spinner animation.  On top of the Phase 1 skeleton (customization
+;; group, faces, struct, error symbol, registries) and Phase 2 core
+;; lifecycle (`pending-make' in insert and adopt modes,
+;; `pending-resolve', `pending-reject', `pending-cancel',
+;; `pending-update', the public predicates and accessors, registry
+;; sync, the `kill-buffer-hook' teardown), Phase 3 adds a single
+;; global animation timer that walks the registry and decorates each
+;; visible placeholder's overlay `before-string' with a spinner
+;; glyph.  Determinate / ETA bars, streaming, edit-survival, the
+;; interactive lister, and process integration are still to come.
 
 ;;; Code:
 
@@ -238,7 +241,9 @@ alignment under variable-pitch buffer faces."
   ;; Callbacks
   on-cancel on-resolve
   ;; Internal
-  attached-process attached-timer in-resolve)
+  attached-process attached-timer in-resolve
+  ;; Render bookkeeping
+  last-frame)
 
 
 ;;; Identity generator
@@ -293,7 +298,10 @@ value."
   "Remove P from the global and buffer-local pending registries.
 Cancels P's `attached-timer' if any.  Does NOT delete the overlay or
 clear markers — that happens in `pending--resolve-internal' since the
-order matters for atomic region replacement."
+order matters for atomic region replacement.
+
+Parks the global animation timer if the registry has emptied as a
+result of this removal."
   (remhash (pending-id p) pending--registry)
   (let ((buf (pending-buffer p)))
     (when (buffer-live-p buf)
@@ -303,7 +311,9 @@ order matters for atomic region replacement."
   (let ((tm (pending-attached-timer p)))
     (when (timerp tm)
       (cancel-timer tm))
-    (setf (pending-attached-timer p) nil)))
+    (setf (pending-attached-timer p) nil))
+  (when (zerop (hash-table-count pending--registry))
+    (pending--park-timer)))
 
 (defun pending--swap-region (p new-text face)
   "Atomically replace P's region with NEW-TEXT propertized by FACE.
@@ -366,6 +376,12 @@ resolve was suppressed."
           (setf (pending-status p) new-status
                 (pending-reason p) reason
                 (pending-resolved-at p) (float-time))
+          ;; Strip animation decorations before swapping the region
+          ;; so the spinner glyph (Phase 3) does not survive into the
+          ;; resolved text.  No-op when the slot was never set.
+          (when (overlayp (pending-overlay p))
+            (overlay-put (pending-overlay p) 'before-string nil)
+            (overlay-put (pending-overlay p) 'after-string nil))
           (pending--swap-region p new-text face)
           (pending--unregister p)
           (let ((ov (pending-overlay p)))
@@ -408,6 +424,134 @@ Iterates a snapshot of `pending--buffer-registry' and calls
 `pending-cancel' with reason `:buffer-killed' on each."
   (dolist (p (copy-sequence pending--buffer-registry))
     (pending-cancel p :buffer-killed)))
+
+
+;;; Spinner animation
+
+(defconst pending--spinner-frames-fallback
+  '((dots-1 . ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+    (dots-2 . ["⠁" "⠂" "⠄" "⡀" "⢀" "⠠" "⠐" "⠈"])
+    (line   . ["|" "/" "-" "\\"])
+    (arc    . ["◜" "◠" "◝" "◞" "◡" "◟"])
+    (clock  . ["🕛" "🕐" "🕑" "🕒" "🕓" "🕔" "🕕" "🕖" "🕗" "🕘" "🕙" "🕚"]))
+  "Built-in spinner frame sets, used when `pending-spinner-styles' is unset.
+The user-facing `pending-spinner-styles' defcustom shadows this; the
+fallback ensures a vector is always available even if the user has
+intentionally narrowed `pending-spinner-styles' or supplied an unknown
+key.")
+
+(defvar pending--global-timer nil
+  "Single timer driving all in-flight spinner animations.
+Created lazily by `pending--ensure-timer' when the first placeholder is
+made; parked by `pending--park-timer' or `pending--tick' once the
+registry has no active placeholders left to animate.")
+
+(defun pending--get-frames (style)
+  "Return the frame vector for spinner STYLE.
+First consults the user-facing `pending-spinner-styles' defcustom,
+then the built-in `pending--spinner-frames-fallback', then falls back
+to `pending-default-spinner-style' in either alist.  Always returns a
+non-nil vector."
+  (or (cdr (assq style pending-spinner-styles))
+      (cdr (assq style pending--spinner-frames-fallback))
+      (cdr (assq pending-default-spinner-style pending-spinner-styles))
+      (cdr (assq pending-default-spinner-style
+                 pending--spinner-frames-fallback))))
+
+(defun pending--frame-index (p frames)
+  "Return the spinner frame index for P given FRAMES vector.
+The index is computed from elapsed wall-time so animation phase
+remains consistent across timer parks and resumes; per DESIGN.md §4
+this avoids the visible \"jump\" that a tick-counter would produce
+when the timer is cancelled and re-armed."
+  (let* ((elapsed (- (float-time) (or (pending-start-time p) (float-time))))
+         (n (length frames)))
+    (if (or (zerop n) (<= elapsed 0))
+        0
+      (mod (truncate (* (max 1 pending-fps) elapsed)) n))))
+
+(defun pending--needs-redraw-p (p)
+  "Return non-nil if P's overlay should re-render this tick.
+P must be in an active lifecycle state (per `pending-active-p') and
+live in a buffer that is currently displayed in some visible window
+of some live frame."
+  (and (pending-active-p p)
+       (let ((buf (pending-buffer p)))
+         (and (buffer-live-p buf)
+              (get-buffer-window buf 'visible)))))
+
+(defun pending--render (p)
+  "Update P's overlay decoration for the current animation frame.
+Sets the overlay's `before-string' to the spinner glyph for the
+current frame.  No-op if the overlay has been deleted, and no-op if
+the chosen frame has not advanced since the last render."
+  (let ((ov (pending-overlay p)))
+    (when (overlayp ov)
+      (let* ((frames (pending--get-frames
+                      (or (pending-spinner-style p)
+                          pending-default-spinner-style)))
+             (frame (pending--frame-index p frames)))
+        (unless (eql frame (pending-last-frame p))
+          (let ((glyph (aref frames frame)))
+            (overlay-put
+             ov 'before-string
+             (concat
+              (propertize glyph 'face 'pending-spinner-face)
+              " ")))
+          (setf (pending-last-frame p) frame))))))
+
+(defun pending--ensure-timer ()
+  "Start the global animation timer if it is not running.
+Idempotent: a no-op when the timer is already live."
+  (unless (and pending--global-timer (timerp pending--global-timer))
+    (setq pending--global-timer
+          (run-with-timer 0 (/ 1.0 pending-fps) #'pending--tick))))
+
+(defun pending--park-timer ()
+  "Cancel the global animation timer.
+Called when `pending--tick' notices no placeholder needs animation, or
+when `pending--unregister' empties the registry.  Safe to call when
+the timer is already nil."
+  (when (timerp pending--global-timer)
+    (cancel-timer pending--global-timer))
+  (setq pending--global-timer nil))
+
+(defun pending--tick ()
+  "Drive one animation frame across all registered placeholders.
+Walks `pending--registry' once.  Each entry is rendered if it is
+active and visible; entries that are merely active but invisible keep
+the timer alive without being drawn.  Once no entry needs rendering
+or to be kept, the timer parks itself.
+
+Per-render errors are caught with `with-demoted-errors' so a buggy
+render path on one placeholder cannot kill the timer for everyone."
+  (let ((any-active nil))
+    (maphash
+     (lambda (_id p)
+       (when (pending-active-p p)
+         (setq any-active t)
+         (when (pending--needs-redraw-p p)
+           (with-demoted-errors "pending--tick render error: %S"
+             (pending--render p)))))
+     pending--registry)
+    (unless any-active
+      (pending--park-timer))))
+
+(defun pending--on-window-buffer-change (_window-or-frame)
+  "Re-arm the global timer if any active placeholder is now visible.
+Hooked onto `window-buffer-change-functions' so a placeholder whose
+buffer becomes visible after the timer parked itself starts animating
+again at the next available tick."
+  (let ((needed nil))
+    (maphash (lambda (_id p)
+               (when (pending--needs-redraw-p p)
+                 (setq needed t)))
+             pending--registry)
+    (when needed
+      (pending--ensure-timer))))
+
+(add-hook 'window-buffer-change-functions
+          #'pending--on-window-buffer-change)
 
 
 ;;; Public API: construction
@@ -533,7 +677,8 @@ position falls outside BUFFER's bounds."
                :on-resolve on-resolve
                :attached-process nil
                :attached-timer nil
-               :in-resolve nil)))
+               :in-resolve nil
+               :last-frame nil)))
       (overlay-put ov 'pending p)
       (overlay-put ov 'face resolved-face)
       (overlay-put ov 'priority 100)
@@ -544,6 +689,10 @@ position falls outside BUFFER's bounds."
                              (pending-label p)
                              (pending-status p))))
       (pending--register p)
+      ;; Wake the global animation timer; safe no-op if it is already
+      ;; running.  See `pending--ensure-timer' and DESIGN.md §4 for the
+      ;; single-timer rationale.
+      (pending--ensure-timer)
       ;; Skip silently if DEADLINE is non-positive — "ignore" semantics
       ;; rather than signalling on every miscall.
       (when (and (numberp deadline) (> deadline 0))

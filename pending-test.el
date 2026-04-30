@@ -15,7 +15,9 @@
 
 ;; ERT tests for `pending'.  The Phase-1 smoke and struct tests stay
 ;; intact; Phase 2 adds tests for state transitions, registry sync,
-;; the buffer-kill hook, and the public predicates and accessors.
+;; the buffer-kill hook, and the public predicates and accessors;
+;; Phase 3 covers the spinner animation — frame index, render side
+;; effects, the visibility gate, and timer parking.
 
 ;;; Code:
 
@@ -44,13 +46,19 @@ throws."
 
 (defmacro pending-test--with-fresh-registry (&rest body)
   "Run BODY with fresh, isolated `pending' global state.
-Rebinds `pending--registry' to a brand-new hash table and resets
+Rebinds `pending--registry' to a brand-new hash table, resets
 `pending--next-id' so id counters and registry contents from earlier
-tests cannot leak in."
+tests cannot leak in, and rebinds `pending--global-timer' so the
+animation timer started by `pending-make' is local to BODY.  The
+timer is cancelled on exit so it cannot fire after BODY returns."
   (declare (indent 0) (debug t))
   `(let ((pending--registry (make-hash-table :test 'eq))
-         (pending--next-id 0))
-     ,@body))
+         (pending--next-id 0)
+         (pending--global-timer nil))
+     (unwind-protect
+         (progn ,@body)
+       (when (timerp pending--global-timer)
+         (cancel-timer pending--global-timer)))))
 
 
 ;;; Phase 1 carry-over tests
@@ -322,6 +330,120 @@ into a no-op so we run the user callback exactly once."
              ('cancel  (pending-cancel  p)))
            (should (= calls 1))
            (should (eq (pending-status p) (cdr case)))))))))
+
+
+;;; Phase 3 — spinner animation
+
+(ert-deftest pending-test/spinner-renders-frame ()
+  "`pending--tick' decorates the overlay with a spinner glyph.
+After resolution, the decoration is cleared so the spinner does not
+survive into the resolved text."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*pending-test/render*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "Working")))
+         ;; Force the visibility gate open so we can render in batch.
+         (cl-letf (((symbol-function 'get-buffer-window)
+                    (lambda (&rest _) t)))
+           (pending--tick))
+         (let ((bs (overlay-get (pending-overlay p) 'before-string)))
+           (should (stringp bs))
+           ;; Glyph + space.
+           (should (= (length bs) 2))
+           (should (equal (substring bs 1 2) " ")))
+         ;; Resolve clears the decoration on the (now-defunct) overlay's
+         ;; before-string before the swap, so the resolved text in the
+         ;; buffer contains no spinner.
+         (let ((ov (pending-overlay p)))
+           (pending-resolve p "DONE")
+           (should (eq (pending-status p) :resolved))
+           (when (overlayp ov)
+             (should (null (overlay-get ov 'before-string))))
+           (should (equal (buffer-string) "DONE"))))))))
+
+(ert-deftest pending-test/spinner-frame-advances ()
+  "`pending--frame-index' advances with elapsed wall-time.
+With FPS = 10 and 0.5s elapsed, the frame index should be 5 modulo
+the frame-set length."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*pending-test/frame*")
+     (with-current-buffer buf
+       (let* ((p (pending-make buf :label "X"))
+              (frames (pending--get-frames
+                       (or (pending-spinner-style p)
+                           pending-default-spinner-style))))
+         (should (vectorp frames))
+         (should (> (length frames) 0))
+         ;; t = 0 → index 0.
+         (setf (pending-start-time p) (float-time))
+         (let ((pending-fps 10))
+           (should (= 0 (pending--frame-index p frames))))
+         ;; t = 0.5s, fps 10 → 5 mod n.
+         (setf (pending-start-time p) (- (float-time) 0.5))
+         (let ((pending-fps 10))
+           (should (= (mod 5 (length frames))
+                      (pending--frame-index p frames))))
+         ;; t = 1.0s, fps 10 → 10 mod n.
+         (setf (pending-start-time p) (- (float-time) 1.0))
+         (let ((pending-fps 10))
+           (should (= (mod 10 (length frames))
+                      (pending--frame-index p frames)))))))))
+
+(ert-deftest pending-test/timer-parks-when-empty ()
+  "Resolving the last placeholder parks the global animation timer.
+After `pending--unregister' empties the registry, the timer is
+cancelled and `pending--global-timer' is nil."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*pending-test/park*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         ;; `pending-make' calls `pending--ensure-timer' itself.
+         (should (timerp pending--global-timer))
+         ;; Resolve empties the registry, which parks the timer in
+         ;; `pending--unregister'.
+         (pending-resolve p "ok")
+         (should (zerop (hash-table-count pending--registry)))
+         (should (null pending--global-timer))
+         ;; A redundant tick on an empty registry remains a no-op
+         ;; with the timer parked.
+         (pending--tick)
+         (should (null pending--global-timer)))))))
+
+(ert-deftest pending-test/render-skips-when-buffer-hidden ()
+  "`pending--tick' does not render when the buffer is not visible.
+The placeholder remains in the registry, but `last-frame' stays nil."
+  (pending-test--with-fresh-registry
+   ;; A fresh, undisplayed buffer is not in any window.
+   (pending-test--with-buffer (buf "*pending-test/hidden*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (should (null (get-buffer-window buf 'visible)))
+         (pending--tick)
+         (should (null (pending-last-frame p)))
+         (should (null (overlay-get (pending-overlay p) 'before-string)))
+         ;; The struct is still registered; the timer just chose not
+         ;; to draw it this tick.
+         (should (= 1 (hash-table-count pending--registry))))))))
+
+(ert-deftest pending-test/get-frames-fallback ()
+  "`pending--get-frames' returns a vector for known keys and unknowns.
+Known keys come back from the user-facing `pending-spinner-styles';
+unknown keys fall back to `pending-default-spinner-style'."
+  (let ((frames (pending--get-frames 'dots-1)))
+    (should (vectorp frames))
+    (should (> (length frames) 0)))
+  (let ((frames (pending--get-frames 'line)))
+    (should (vectorp frames))
+    (should (> (length frames) 0)))
+  (let ((frames (pending--get-frames 'no-such-style)))
+    (should (vectorp frames))
+    (should (> (length frames) 0)))
+  ;; If the user-facing alist is empty, the built-in fallback still
+  ;; furnishes a vector for every defined style key.
+  (let ((pending-spinner-styles nil))
+    (let ((frames (pending--get-frames 'dots-1)))
+      (should (vectorp frames))
+      (should (> (length frames) 0)))))
 
 
 (provide 'pending-test)
