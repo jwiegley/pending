@@ -1,0 +1,33 @@
+RESEARCH.md
+  18e297f13c46ee89 1-323
+.gitignore
+  18e297f13c46ee89 1-5
+DESIGN.md
+  18e297f13c46ee89 1-1596
+NOTES.md
+  18e297f13c46ee89 1-148
+PLAN.md
+  18e297f13c46ee89 1-272
+README.md
+  18e297f13c46ee89 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "baedc3f5eaa5094c4f082edeb5431f183c7a93e6",
+  "prompts": {
+    "18e297f13c46ee89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2d809de-c9b8-4e4b-9b16-1bfb89e63390",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 2413,
+      "total_deletions": 0,
+      "accepted_lines": 2413,
+      "overriden_lines": 0
+    }
+  }
+}
