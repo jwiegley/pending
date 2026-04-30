@@ -577,6 +577,97 @@ characters, not bytes."
          (should (null (overlay-get (pending-overlay p) 'after-string))))))))
 
 
+;;; Phase 5 — edit-survival
+
+(ert-deftest pending-test/cannot-edit-placeholder-text ()
+  "User attempting to edit placeholder text is rejected.
+The inserted label carries `read-only' text properties; calling
+`insert' inside the region with `inhibit-read-only' bound nil signals
+`text-read-only'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-readonly*")
+     (with-current-buffer buf
+       (insert "Before:")
+       (let ((p (pending-make buf :label "MIDDLE")))
+         (goto-char (1+ (overlay-start (pending-overlay p))))
+         ;; Point now lies between two read-only characters of the
+         ;; placeholder body — `insert' must signal `text-read-only'.
+         (should-error (let ((inhibit-read-only nil))
+                         (insert "EVIL"))
+                       :type 'text-read-only))))))
+
+(ert-deftest pending-test/can-edit-around-placeholder ()
+  "User can freely edit text outside the placeholder.
+`front-sticky (read-only)' on the placeholder blocks insertions just
+in front, but text inserted at `point-min' (well before the
+placeholder) goes through; `rear-nonsticky (read-only)' allows text
+appended past the placeholder's end."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-around*")
+     (with-current-buffer buf
+       (insert "Before:")
+       (let ((p (pending-make buf :label "MID")))
+         (goto-char (point-min))
+         (insert "Pre-")
+         (goto-char (point-max))
+         (insert "-Post")
+         (should (string-match-p "Pre-Before:" (buffer-string)))
+         (should (string-match-p "-Post" (buffer-string)))
+         (pending-resolve p "OK"))))))
+
+(ert-deftest pending-test/region-deletion-cancels ()
+  "Deleting the placeholder region cancels with reason `:region-deleted'.
+The overlay's `modification-hooks' detect a zero-length collapse and
+call `pending-cancel' with `:region-deleted'.  The user's
+`on-cancel' callback fires as part of the cancel path."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-delete*")
+     (with-current-buffer buf
+       (insert "X")
+       (let* ((flag nil)
+              (p (pending-make buf :label "MID"
+                               :on-cancel (lambda (_) (setq flag t)))))
+         (insert "Y")
+         (let ((s (overlay-start (pending-overlay p)))
+               (e (overlay-end (pending-overlay p)))
+               (inhibit-read-only t))
+           (delete-region s e))
+         (should (eq (pending-status p) :cancelled))
+         (should (eq (pending-reason p) :region-deleted))
+         (should flag))))))
+
+(ert-deftest pending-test/markers-survive-edit-before ()
+  "Inserting text BEFORE the placeholder shifts markers but doesn't break them.
+Both `pending-start' and `pending-end' are markers anchored on the
+buffer; insertions at positions earlier than them push them forward
+by exactly the inserted length."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-markers-before*")
+     (with-current-buffer buf
+       (insert "AB")
+       (let* ((p (pending-make buf :label "MID"))
+              (start-pos (marker-position (pending-start p)))
+              (end-pos (marker-position (pending-end p))))
+         (goto-char (point-min))
+         (insert "Pre-")
+         (should (= (+ 4 start-pos) (marker-position (pending-start p))))
+         (should (= (+ 4 end-pos) (marker-position (pending-end p)))))))))
+
+(ert-deftest pending-test/resolved-text-is-editable ()
+  "After resolve, the text is freely editable.
+`pending--swap-region' inserts the resolved replacement without any
+read-only properties, so the user can edit the post-resolve text in
+the normal way."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-resolved-edit*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve p "DONE")
+         (goto-char (point-min))
+         (insert "POST-")
+         (should (string-match-p "POST-DONE" (buffer-string))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

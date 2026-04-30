@@ -39,20 +39,27 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides Phase 4: the core lifecycle plus
-;; spinner animation plus determinate and ETA progress bars.  On top
-;; of the Phase 1 skeleton (customization group, faces, struct, error
-;; symbol, registries) and Phase 2 core lifecycle (`pending-make' in
-;; insert and adopt modes, `pending-resolve', `pending-reject',
-;; `pending-cancel', `pending-update', the public predicates and
-;; accessors, registry sync, the `kill-buffer-hook' teardown), Phase 3
-;; added a single global animation timer that walks the registry and
-;; decorates each visible placeholder's overlay `before-string' with a
-;; spinner glyph.  Phase 4 dispatches the after-string render on
-;; `(pending-indicator p)' so `:percent' shows a determinate bar plus a
-;; percentage and `:eta' shows a piecewise-asymptotic bar plus a
-;; remaining-seconds estimate.  Streaming, edit-survival, the
-;; interactive lister, and process integration are still to come.
+;; This file currently provides Phase 5: the core lifecycle plus
+;; spinner animation plus determinate and ETA progress bars plus
+;; edit-survival.  On top of the Phase 1 skeleton (customization
+;; group, faces, struct, error symbol, registries) and Phase 2 core
+;; lifecycle (`pending-make' in insert and adopt modes,
+;; `pending-resolve', `pending-reject', `pending-cancel',
+;; `pending-update', the public predicates and accessors, registry
+;; sync, the `kill-buffer-hook' teardown), Phase 3 added a single
+;; global animation timer that walks the registry and decorates each
+;; visible placeholder's overlay `before-string' with a spinner glyph.
+;; Phase 4 dispatches the after-string render on
+;; `(pending-indicator p)' so `:percent' shows a determinate bar plus
+;; a percentage and `:eta' shows a piecewise-asymptotic bar plus a
+;; remaining-seconds estimate.  Phase 5 makes inserted placeholder
+;; text read-only via text properties (`front-sticky' on `read-only'
+;; so insertions just before it are blocked too, `rear-nonsticky' on
+;; `read-only' so insertions just after it are allowed) and installs
+;; overlay modification-hooks that auto-cancel the placeholder with
+;; reason `:region-deleted' when the user collapses its overlay to
+;; zero length.  Streaming, the interactive lister, and process
+;; integration are still to come.
 
 ;;; Code:
 
@@ -432,6 +439,35 @@ Iterates a snapshot of `pending--buffer-registry' and calls
   (dolist (p (copy-sequence pending--buffer-registry))
     (pending-cancel p :buffer-killed)))
 
+(defun pending--on-modify (ov after _beg _end &optional _len)
+  "Overlay modification hook: auto-cancel on region collapse or buffer death.
+OV is the overlay carrying the `pending' property.  AFTER is non-nil
+when the hook fires after the modification (we ignore the before-edit
+call).  The remaining arguments — region beginning, end, and pre-edit
+length — are unused; the decision is made by inspecting OV after the
+fact.
+
+Wired onto OV's `modification-hooks', `insert-in-front-hooks', and
+`insert-behind-hooks' by `pending-make'.  Suppressed during the
+library's own atomic resolve via the `inhibit-modification-hooks'
+binding in `pending--swap-region', so the cancel-on-collapse path
+fires only for user-initiated edits.
+
+Cancels the pending placeholder with reason `:buffer-killed' when its
+buffer has been killed, or `:region-deleted' when the overlay has
+collapsed to zero length (the user has removed the entire region)."
+  (when after
+    (let ((p (overlay-get ov 'pending)))
+      (when p
+        (cond
+         ;; Buffer killed — defer to the buffer-killed reason.
+         ((or (null (overlay-buffer ov))
+              (not (buffer-live-p (overlay-buffer ov))))
+          (pending-cancel p :buffer-killed))
+         ;; Overlay collapsed to zero length — user deleted the region.
+         ((= (overlay-start ov) (overlay-end ov))
+          (pending-cancel p :region-deleted)))))))
+
 
 ;;; Spinner animation
 
@@ -717,9 +753,14 @@ of BUFFER so it can be enumerated.
 
 Insertion modes:
   - If START and END are both nil, insert a new placeholder at point
-    in BUFFER.  Both markers are created at the inserted text.
+    in BUFFER.  The inserted label text is propertized read-only so
+    the user cannot edit it while the async work is in flight; the
+    library lifts the read-only restriction during its own resolve.
   - If START and END are both non-nil (positions or markers), adopt
-    the existing region [START, END]; do not insert text.
+    the existing region [START, END]; do not insert text.  Adopt mode
+    does NOT retroactively add read-only properties to the existing
+    text — the caller owns that text and should add such properties
+    itself before calling `pending-make' if it wants edit protection.
   - It is an error to supply only one of START or END.
 
 LABEL is a short string shown inside the placeholder, default
@@ -770,7 +811,20 @@ position falls outside BUFFER's bounds."
        ((and (null start) (null end))
         (let ((insert-point (point)))
           (setq start-marker (copy-marker insert-point nil))
-          (insert resolved-label)
+          ;; Insert the label text propertized read-only so the user
+          ;; cannot edit the placeholder while the async work is in
+          ;; flight.  `front-sticky (read-only)' makes insertions just
+          ;; before the placeholder block too — otherwise a user
+          ;; positioned at the start could sneak text in front.
+          ;; `rear-nonsticky (read-only)' makes insertions immediately
+          ;; after the placeholder explicitly allowed.  The library's
+          ;; own swap is wrapped in `inhibit-read-only' so the
+          ;; placeholder remains mutable from the inside.
+          (insert (propertize resolved-label
+                              'face resolved-face
+                              'read-only t
+                              'front-sticky '(read-only)
+                              'rear-nonsticky '(read-only)))
           ;; End marker is insertion-type nil for now: Phase 6 will
           ;; flip it to t while streaming and back to nil at finish,
           ;; mirroring gptel's tracking-marker discipline
@@ -824,6 +878,14 @@ position falls outside BUFFER's bounds."
       (overlay-put ov 'face resolved-face)
       (overlay-put ov 'priority 100)
       (overlay-put ov 'evaporate nil)
+      ;; Modification hooks fire on user edits inside the region or at
+      ;; its edges.  They detect the "user deleted the placeholder"
+      ;; case and auto-cancel with `:region-deleted'.
+      ;; `pending--swap-region' binds `inhibit-modification-hooks' so
+      ;; the library's own resolve does not retrigger them.
+      (overlay-put ov 'modification-hooks '(pending--on-modify))
+      (overlay-put ov 'insert-in-front-hooks '(pending--on-modify))
+      (overlay-put ov 'insert-behind-hooks '(pending--on-modify))
       (overlay-put ov 'help-echo
                    (lambda (_window _object _pos)
                      (format "Pending: %s [%s]"
