@@ -39,11 +39,14 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides the Phase 1 skeleton: customization
-;; group, defcustoms, faces, the `pending' struct type, the error
-;; symbol, an ID generator, and the global and buffer-local registries.
-;; Subsequent phases add lifecycle, animation, streaming, and the
-;; interactive UI.
+;; This file currently provides Phase 2: the core lifecycle.  On top
+;; of the Phase 1 skeleton (customization group, faces, struct, error
+;; symbol, registries), it implements `pending-make' (insert and adopt
+;; modes), `pending-resolve', `pending-reject', `pending-cancel',
+;; `pending-update', the public predicates and accessors, the global
+;; and buffer-local registry mutators, and the `kill-buffer-hook'
+;; teardown.  Animation, streaming, edit-survival, the interactive
+;; lister, and process integration are still to come.
 
 ;;; Code:
 
@@ -235,7 +238,7 @@ alignment under variable-pitch buffer faces."
   ;; Callbacks
   on-cancel on-resolve
   ;; Internal
-  attached-process attached-timer)
+  attached-process attached-timer in-resolve)
 
 
 ;;; Identity generator
@@ -260,6 +263,426 @@ Updated by `pending--register' and `pending--unregister'.")
   "Buffer-local list of pending structs that live in this buffer.
 Kept in sync with `pending--registry' so buffer-scoped queries do not
 have to scan the global table.")
+
+
+;;; Internal helpers
+
+(defun pending--terminal-status-p (status)
+  "Return non-nil if STATUS is a terminal lifecycle keyword.
+The terminal states are `:resolved', `:rejected', `:cancelled', and
+`:expired'."
+  (memq status '(:resolved :rejected :cancelled :expired)))
+
+(defun pending--register (p)
+  "Register P in the global and buffer-local pending registries.
+Adds P to `pending--registry' keyed by its id, and pushes P onto the
+buffer-local `pending--buffer-registry' of P's buffer.  Both updates
+happen, in that order.  Also installs the buffer-kill cleanup hook
+in P's buffer if not already present.
+
+This function has side effects only; it does not return a useful
+value."
+  (puthash (pending-id p) p pending--registry)
+  (let ((buf (pending-buffer p)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (push p pending--buffer-registry)
+        (add-hook 'kill-buffer-hook #'pending--on-kill-buffer nil t)))))
+
+(defun pending--unregister (p)
+  "Remove P from the global and buffer-local pending registries.
+Cancels P's `attached-timer' if any.  Does NOT delete the overlay or
+clear markers — that happens in `pending--resolve-internal' since the
+order matters for atomic region replacement."
+  (remhash (pending-id p) pending--registry)
+  (let ((buf (pending-buffer p)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (setq pending--buffer-registry
+              (delq p pending--buffer-registry)))))
+  (let ((tm (pending-attached-timer p)))
+    (when (timerp tm)
+      (cancel-timer tm))
+    (setf (pending-attached-timer p) nil)))
+
+(defun pending--swap-region (p new-text face)
+  "Atomically replace P's region with NEW-TEXT propertized by FACE.
+The replacement is wrapped in an `atomic-change-group' so undo sees
+exactly one step.  `inhibit-read-only' and `inhibit-modification-hooks'
+are bound around the swap so neither this library's own read-only
+enforcement nor its modification hooks fight the operation.
+
+The end marker is left pointing at the position immediately after the
+inserted text."
+  (let ((buf (pending-buffer p)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (atomic-change-group
+          (let ((inhibit-read-only t)
+                (inhibit-modification-hooks t)
+                (start (marker-position (pending-start p)))
+                (end (marker-position (pending-end p))))
+            (when (and start end)
+              (delete-region start end)
+              (goto-char start)
+              (insert (propertize (or new-text "") 'face face))
+              (set-marker (pending-end p) (point)))))))))
+
+(defun pending--resolve-internal (p new-status reason new-text face
+                                    &optional run-on-resolve)
+  "Flip P from a non-terminal state to terminal NEW-STATUS with REASON.
+This is the single mutation path for terminal transitions; it
+enforces the single-resolution invariant of DESIGN.md §2.
+
+Steps:
+  1. Bail out early if `pending--in-resolve' is already set on P
+     (re-entrant guard) or if P is already in a terminal state.
+  2. Set P's status, REASON-derived reason slot, and resolved-at.
+  3. Replace the placeholder region with NEW-TEXT propertized by FACE
+     via `pending--swap-region'.
+  4. Unregister P from both registries (also cancels P's deadline
+     timer if any).
+  5. Delete P's overlay and clear its markers.
+  6. If RUN-ON-RESOLVE is non-nil, fire P's `on-resolve' callback
+     once, with errors caught so a buggy callback does not crash this
+     resolver.
+
+Returns t on success; nil if P was already terminal or a re-entrant
+resolve was suppressed."
+  (cond
+   ((pending-in-resolve p)
+    nil)
+   ((pending--terminal-status-p (pending-status p))
+    (display-warning
+     'pending
+     (format "ignoring %s on already-terminal placeholder %s (status %s)"
+             new-status (pending-id p) (pending-status p))
+     :debug)
+    nil)
+   (t
+    (setf (pending-in-resolve p) t)
+    (unwind-protect
+        (progn
+          (setf (pending-status p) new-status
+                (pending-reason p) reason
+                (pending-resolved-at p) (float-time))
+          (pending--swap-region p new-text face)
+          (pending--unregister p)
+          (let ((ov (pending-overlay p)))
+            (when (overlayp ov)
+              (delete-overlay ov))
+            (setf (pending-overlay p) nil))
+          (let ((sm (pending-start p))
+                (em (pending-end p)))
+            (when (markerp sm) (set-marker sm nil))
+            (when (markerp em) (set-marker em nil)))
+          (when (and run-on-resolve (pending-on-resolve p))
+            (condition-case err
+                (funcall (pending-on-resolve p) p)
+              (error
+               (display-warning
+                'pending
+                (format "on-resolve callback for %s signaled: %S"
+                        (pending-id p) err)
+                :error))))
+          t)
+      (setf (pending-in-resolve p) nil)))))
+
+(defun pending--on-kill-buffer ()
+  "Cancel every pending placeholder living in the buffer being killed.
+Installed buffer-locally on `kill-buffer-hook' by `pending--register'.
+Iterates a snapshot of `pending--buffer-registry' and calls
+`pending-cancel' with reason `:buffer-killed' on each."
+  (dolist (p (copy-sequence pending--buffer-registry))
+    (pending-cancel p :buffer-killed)))
+
+
+;;; Public API: construction
+
+;;;###autoload
+(cl-defun pending-make (buffer &key
+                                label
+                                start end
+                                indicator
+                                deadline
+                                eta
+                                percent
+                                face
+                                spinner-style
+                                on-cancel
+                                on-resolve
+                                group)
+  "Create and insert a pending placeholder in BUFFER.
+Return the new `pending' struct.  The placeholder is registered in
+`pending--registry' and the buffer-local `pending--buffer-registry'
+of BUFFER so it can be enumerated.
+
+Insertion modes:
+  - If START and END are both nil, insert a new placeholder at point
+    in BUFFER.  Both markers are created at the inserted text.
+  - If START and END are both non-nil (positions or markers), adopt
+    the existing region [START, END]; do not insert text.
+  - It is an error to supply only one of START or END.
+
+LABEL is a short string shown inside the placeholder, default
+\"Pending\".  GROUP is an optional symbol for filtering.
+
+INDICATOR selects the visual; `:spinner' (default), `:percent', or
+`:eta'.  PERCENT and ETA prime the determinate / ETA modes; FACE
+overrides `pending-face'; SPINNER-STYLE selects an entry from
+`pending-spinner-styles'.
+
+DEADLINE, if non-nil, is wall-clock seconds before the placeholder is
+auto-rejected with reason `:timed-out'.  A one-shot timer is
+scheduled.
+
+ON-CANCEL is a function of one argument (the pending struct) called
+when the placeholder is cancelled, before the status flips.
+ON-RESOLVE is a function called exactly once when the placeholder
+transitions to any terminal state.
+
+Side effects: inserts placeholder text (insert mode), creates and
+adopts an overlay, registers the struct, optionally schedules the
+deadline timer, and installs the buffer-kill hook locally.  Signals
+`pending-error' if BUFFER is dead, read-only and
+`pending-allow-read-only' is nil, START and END do not match, or any
+position falls outside BUFFER's bounds."
+  (unless (buffer-live-p buffer)
+    (signal 'pending-error (list "buffer is not live" buffer)))
+  (with-current-buffer buffer
+    (when (and buffer-read-only (not pending-allow-read-only))
+      (signal 'pending-error (list "buffer is read-only" buffer))))
+  (when (and (null start) end)
+    (signal 'pending-error
+            (list "must supply both START and END or neither")))
+  (when (and start (null end))
+    (signal 'pending-error
+            (list "must supply both START and END or neither")))
+  (let* ((id (pending--gen-id))
+         (resolved-label (or label "Pending"))
+         (resolved-indicator (or indicator :spinner))
+         (resolved-spinner (or spinner-style pending-default-spinner-style))
+         (resolved-face (or face 'pending-face))
+         (inhibit-read-only pending-allow-read-only)
+         start-marker
+         end-marker)
+    (with-current-buffer buffer
+      (cond
+       ;; Insert mode.
+       ((and (null start) (null end))
+        (let ((insert-point (point)))
+          (setq start-marker (copy-marker insert-point nil))
+          (insert resolved-label)
+          ;; End marker is insertion-type nil for now: Phase 6 will
+          ;; flip it to t while streaming and back to nil at finish,
+          ;; mirroring gptel's tracking-marker discipline
+          ;; (gptel.el:1389, 1794).  Keeping it nil now means typing
+          ;; just after the placeholder lands outside the region — the
+          ;; behaviour the canonical smoke test expects.
+          (setq end-marker (copy-marker (point) nil))))
+       ;; Adopt mode.
+       (t
+        (let ((s (if (markerp start) (marker-position start) start))
+              (e (if (markerp end)   (marker-position end)   end)))
+          (unless (and (integerp s) (integerp e))
+            (signal 'pending-error (list "invalid START/END" start end)))
+          (when (or (< s (point-min)) (> s (point-max))
+                    (< e (point-min)) (> e (point-max)))
+            (signal 'pending-error (list "START/END outside buffer" s e)))
+          (when (> s e)
+            (signal 'pending-error (list "START after END" s e)))
+          (setq start-marker (copy-marker s nil))
+          (setq end-marker (copy-marker e nil))))))
+    (let* ((ov (make-overlay (marker-position start-marker)
+                             (marker-position end-marker)
+                             buffer
+                             nil ; front-advance: no
+                             t)) ; rear-advance: yes (per prompt)
+           (p (pending--make-struct
+               :id id
+               :group group
+               :label resolved-label
+               :buffer buffer
+               :start start-marker
+               :end end-marker
+               :overlay ov
+               :indicator resolved-indicator
+               :spinner-style resolved-spinner
+               :face resolved-face
+               :percent percent
+               :eta eta
+               :start-time (float-time)
+               :deadline deadline
+               :status :scheduled
+               :reason nil
+               :resolved-at nil
+               :on-cancel on-cancel
+               :on-resolve on-resolve
+               :attached-process nil
+               :attached-timer nil
+               :in-resolve nil)))
+      (overlay-put ov 'pending p)
+      (overlay-put ov 'face resolved-face)
+      (overlay-put ov 'priority 100)
+      (overlay-put ov 'evaporate nil)
+      (overlay-put ov 'help-echo
+                   (lambda (_window _object _pos)
+                     (format "Pending: %s [%s]"
+                             (pending-label p)
+                             (pending-status p))))
+      (pending--register p)
+      (when (numberp deadline)
+        (setf (pending-attached-timer p)
+              (run-at-time
+               deadline nil
+               (lambda ()
+                 (when (pending-active-p p)
+                   (pending-reject p :timed-out))))))
+      p)))
+
+
+;;; Public API: terminal transitions
+
+(defun pending-resolve (p text)
+  "Atomically replace P's placeholder region with TEXT.
+Transition P to `:resolved'.  Return t on success, or nil if P was
+already in a terminal state (in which case a `:debug' warning is
+logged).
+
+The replacement happens inside an `atomic-change-group' so undo sees
+one step, with `inhibit-read-only' and `inhibit-modification-hooks'
+bound during the swap.  Side effects: removes the overlay, clears
+markers, unregisters P, cancels its deadline timer, and runs the
+`on-resolve' callback once (errors there are caught and warned)."
+  (pending--resolve-internal p :resolved nil text 'pending-face t))
+
+(defun pending-reject (p reason &optional replacement-text)
+  "Mark P as failed with REASON and replace its region.
+REASON should be a string or a keyword/symbol describing the failure.
+REPLACEMENT-TEXT defaults to a glyph plus the reason rendered with
+`pending-error-face'.  Transition P to `:rejected' and return t on
+success, or nil if P was already terminal.
+
+Side effects mirror `pending-resolve' (removes overlay, clears
+markers, unregisters, cancels timer, runs `on-resolve')."
+  (let ((text (or replacement-text
+                  (format "✗ %s" (or reason "Failed")))))
+    (pending--resolve-internal p :rejected reason text
+                               'pending-error-face t)))
+
+(defun pending-cancel (p &optional reason)
+  "Cancel P, optionally with REASON (default `:cancelled-by-user').
+Call P's `on-cancel' callback FIRST, so the caller can abort its
+underlying work (e.g. kill a process).  Then transition P to
+`:cancelled' and replace its region with a small cancelled glyph
+faced `pending-cancelled-face'.
+
+The on-cancel callback is wrapped in `condition-case' so a buggy
+callback does not break the cancel path.  This function is safe to
+call re-entrantly from inside the callback's own chain — the
+single-resolution guard makes recursive cancels into no-ops.
+
+Return t on success, or nil if P was already terminal."
+  (let ((effective-reason (or reason :cancelled-by-user)))
+    (cond
+     ((pending-in-resolve p)
+      nil)
+     ((pending--terminal-status-p (pending-status p))
+      (display-warning
+       'pending
+       (format "ignoring cancel on already-terminal placeholder %s (status %s)"
+               (pending-id p) (pending-status p))
+       :debug)
+      nil)
+     (t
+      ;; Set the re-entrancy guard before invoking on-cancel: a buggy
+      ;; callback that calls back into `pending-cancel' on the same
+      ;; struct would otherwise loop forever (status is still
+      ;; non-terminal at this point, so only the in-resolve flag
+      ;; protects us).  `pending--resolve-internal' below also sets
+      ;; this flag — that is harmless (idempotent assignment).
+      (setf (pending-in-resolve p) t)
+      (unwind-protect
+          (when (pending-on-cancel p)
+            (condition-case err
+                (funcall (pending-on-cancel p) p)
+              (error
+               (display-warning
+                'pending
+                (format "on-cancel callback for %s signaled: %S"
+                        (pending-id p) err)
+                :error))))
+        (setf (pending-in-resolve p) nil))
+      (pending--resolve-internal
+       p :cancelled effective-reason
+       (format "✗ %s" effective-reason)
+       'pending-cancelled-face t)))))
+
+
+;;; Public API: mid-flight updates
+
+(cl-defun pending-update (p &key label percent eta indicator)
+  "Update P's metadata mid-flight.  Mutates the named slots only.
+LABEL, PERCENT, ETA, and INDICATOR replace the corresponding slots
+when non-nil.  No state transition happens; the next animation tick
+will pick up the new values.  Return P.
+
+If P is in a terminal state, log a `:debug' warning and return P
+unchanged."
+  (cond
+   ((pending--terminal-status-p (pending-status p))
+    (display-warning
+     'pending
+     (format "ignoring update on already-terminal placeholder %s (status %s)"
+             (pending-id p) (pending-status p))
+     :debug)
+    p)
+   (t
+    (when label     (setf (pending-label p) label))
+    (when percent   (setf (pending-percent p) percent))
+    (when eta       (setf (pending-eta p) eta))
+    (when indicator (setf (pending-indicator p) indicator))
+    p)))
+
+
+;;; Public API: predicates and accessors
+
+(defun pending-active-p (p)
+  "Return non-nil if P is in an active (non-terminal) lifecycle state.
+The active states are `:scheduled', `:running', and `:streaming'."
+  (memq (pending-status p) '(:scheduled :running :streaming)))
+
+(defun pending-at (&optional pos buffer)
+  "Return the pending struct at POS in BUFFER, or nil if none.
+POS defaults to point; BUFFER defaults to the current buffer.
+Searches the overlays at POS for one carrying a `pending' property
+and returns its value."
+  (let ((target-buffer (or buffer (current-buffer))))
+    (when (buffer-live-p target-buffer)
+      (with-current-buffer target-buffer
+        (let ((effective-pos (or pos (point)))
+              (result nil))
+          (dolist (ov (overlays-at effective-pos))
+            (let ((p (overlay-get ov 'pending)))
+              (when (and p (null result))
+                (setq result p))))
+          result)))))
+
+(defun pending-list-active (&optional buffer group)
+  "Return the list of active pending structs.
+If BUFFER is non-nil, restrict the result to placeholders whose
+buffer is BUFFER.  If GROUP is non-nil, restrict to placeholders
+whose `group' slot is `eq' to GROUP.
+
+Order within the result is unspecified."
+  (let ((acc nil))
+    (maphash
+     (lambda (_id p)
+       (when (and (or (null buffer) (eq (pending-buffer p) buffer))
+                  (or (null group)  (eq (pending-group p)  group)))
+         (push p acc)))
+     pending--registry)
+    acc))
 
 
 (provide 'pending)
