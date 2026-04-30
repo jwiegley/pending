@@ -473,6 +473,108 @@ unknown keys fall back to `pending-default-spinner-style'."
       (should (> (length frames) 0)))))
 
 
+;;; Phase 4 — determinate and ETA bars
+
+(ert-deftest pending-test/eta-fraction-monotonic ()
+  "ETA fraction is monotonically non-decreasing over time."
+  (let* ((eta 8.0)
+         (start 1000.0)
+         (samples (mapcar
+                   (lambda (dt)
+                     (pending--eta-fraction start eta (+ start dt)))
+                   (number-sequence 0 20))))
+    (cl-loop for (a b) on samples while b
+             do (should (<= a b)))))
+
+(ert-deftest pending-test/eta-fraction-checkpoints ()
+  "ETA fraction matches DESIGN.md §4 checkpoints."
+  (let ((start 0.0) (eta 10.0))
+    (should (= 0.0 (pending--eta-fraction start eta 0.0)))
+    (should (= 0.5 (pending--eta-fraction start eta 5.0)))
+    (should (= 0.8 (pending--eta-fraction start eta 8.0)))
+    (should (< (abs (- 0.95 (pending--eta-fraction start eta 10.0))) 1e-9))
+    ;; t = 2T → ~0.9816, definitely in (0.95, 1.0).
+    (should (> (pending--eta-fraction start eta 20.0) 0.95))
+    (should (< (pending--eta-fraction start eta 20.0) 1.0))
+    ;; never reaches 1
+    (should (< (pending--eta-fraction start eta 1000.0) 1.0))))
+
+(ert-deftest pending-test/eta-fraction-asymptote ()
+  "ETA fraction approaches 1.0 but never reaches it past the deadline."
+  (let ((start 0.0) (eta 1.0))
+    (dotimes (i 50)
+      (let ((frac (pending--eta-fraction start eta (1+ (* i 10.0)))))
+        (should (< frac 1.0))
+        (should (>= frac 0.95))))))
+
+(ert-deftest pending-test/render-bar-empty-and-full ()
+  "Bar renders correctly at the boundary fractions.
+WIDTH-cell bar with fraction 0 contains the empty char only; with
+fraction 1 contains the full char only.  WIDTH is measured in visible
+characters, not bytes."
+  (let* ((blocks (pending--bar-blocks))
+         (empty-char (aref blocks 0))
+         (full-char  (aref blocks (1- (length blocks)))))
+    (let ((bar0 (pending--render-bar 0.0 8))
+          (barf (pending--render-bar 1.0 8))
+          (bar5 (pending--render-bar 0.5 8)))
+      (should (= 8 (length bar0)))
+      (should (= 8 (length barf)))
+      (should (= 8 (length bar5)))
+      (should (string-match-p (regexp-quote empty-char) bar0))
+      (should (string-match-p (regexp-quote full-char) barf))
+      (should-not (string-match-p (regexp-quote full-char) bar0))
+      (should-not (string-match-p (regexp-quote empty-char) barf)))))
+
+(ert-deftest pending-test/render-bar-clamps-out-of-range ()
+  "`pending--render-bar' gracefully clamps fractions outside [0,1]."
+  (let ((blocks (pending--bar-blocks)))
+    ;; Negative fraction renders as all-empty.
+    (should (string-match-p (regexp-quote (aref blocks 0))
+                            (pending--render-bar -0.5 8)))
+    ;; >1 fraction renders as all-full.
+    (should (string-match-p (regexp-quote (aref blocks (1- (length blocks))))
+                            (pending--render-bar 2.0 8)))))
+
+(ert-deftest pending-test/render-percent-sets-after-string ()
+  "Percent indicator populates the overlay's `after-string' with %."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-percent*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X" :indicator :percent
+                              :percent 0.3)))
+         (cl-letf (((symbol-function 'get-buffer-window)
+                    (lambda (&rest _) t)))
+           (pending--tick))
+         (let ((after (overlay-get (pending-overlay p) 'after-string)))
+           (should (stringp after))
+           (should (string-match-p "30%" after))))))))
+
+(ert-deftest pending-test/render-eta-sets-after-string ()
+  "ETA indicator populates `after-string' with a remaining estimate."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-eta*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X" :indicator :eta :eta 5.0)))
+         (cl-letf (((symbol-function 'get-buffer-window)
+                    (lambda (&rest _) t)))
+           (pending--tick))
+         (let ((after (overlay-get (pending-overlay p) 'after-string)))
+           (should (stringp after))
+           (should (string-match-p "~[0-9]+s" after))))))))
+
+(ert-deftest pending-test/render-spinner-no-after-string ()
+  "Spinner indicator does not set `after-string'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-spin*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X" :indicator :spinner)))
+         (cl-letf (((symbol-function 'get-buffer-window)
+                    (lambda (&rest _) t)))
+           (pending--tick))
+         (should (null (overlay-get (pending-overlay p) 'after-string))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

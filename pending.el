@@ -39,16 +39,19 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides Phase 3: the core lifecycle plus
-;; spinner animation.  On top of the Phase 1 skeleton (customization
-;; group, faces, struct, error symbol, registries) and Phase 2 core
-;; lifecycle (`pending-make' in insert and adopt modes,
-;; `pending-resolve', `pending-reject', `pending-cancel',
-;; `pending-update', the public predicates and accessors, registry
-;; sync, the `kill-buffer-hook' teardown), Phase 3 adds a single
-;; global animation timer that walks the registry and decorates each
-;; visible placeholder's overlay `before-string' with a spinner
-;; glyph.  Determinate / ETA bars, streaming, edit-survival, the
+;; This file currently provides Phase 4: the core lifecycle plus
+;; spinner animation plus determinate and ETA progress bars.  On top
+;; of the Phase 1 skeleton (customization group, faces, struct, error
+;; symbol, registries) and Phase 2 core lifecycle (`pending-make' in
+;; insert and adopt modes, `pending-resolve', `pending-reject',
+;; `pending-cancel', `pending-update', the public predicates and
+;; accessors, registry sync, the `kill-buffer-hook' teardown), Phase 3
+;; added a single global animation timer that walks the registry and
+;; decorates each visible placeholder's overlay `before-string' with a
+;; spinner glyph.  Phase 4 dispatches the after-string render on
+;; `(pending-indicator p)' so `:percent' shows a determinate bar plus a
+;; percentage and `:eta' shows a piecewise-asymptotic bar plus a
+;; remaining-seconds estimate.  Streaming, edit-survival, the
 ;; interactive lister, and process integration are still to come.
 
 ;;; Code:
@@ -481,13 +484,129 @@ of some live frame."
          (and (buffer-live-p buf)
               (get-buffer-window buf 'visible)))))
 
+
+;;; Progress bar rendering (Phase 4)
+
+(defconst pending--bar-blocks-eighths
+  ["·" "▏" "▎" "▍" "▌" "▋" "▊" "▉" "█"]
+  "Eighths-resolution bar characters (index 0..8).
+Index 0 is empty (a middle dot used as a faint dotted background) and
+index 8 is full.  Indices 1..7 use Unicode block elements at
+eighth-cell resolution so the bar advances smoothly rather than in
+whole-cell jumps.")
+
+(defconst pending--bar-blocks-ascii
+  ["." "." "." "." "-" "-" "-" "-" "#"]
+  "ASCII fallback bar characters (index 0..8).
+Approximates the 9-step quantization with `.', `-', and `#' so the bar
+renders sensibly on terminals or fonts without good Unicode block
+support.")
+
+(defun pending--bar-blocks ()
+  "Return the bar-character vector for `pending-bar-style'.
+`eighths' (default) selects `pending--bar-blocks-eighths'; `ascii'
+selects `pending--bar-blocks-ascii'.  Any other value falls through to
+the eighths vector."
+  (pcase pending-bar-style
+    ('ascii pending--bar-blocks-ascii)
+    (_      pending--bar-blocks-eighths)))
+
+(defun pending--render-bar (fraction width)
+  "Render a progress bar of WIDTH cells, FRACTION in [0.0, 1.0].
+FRACTION outside that range is silently clamped.  WIDTH is the visible
+character count, not the byte length — Unicode block characters in
+`pending--bar-blocks-eighths' are multi-byte, so we build the bar via
+`concat' rather than `aset' on a unibyte buffer.
+
+The returned string is propertized with `pending-progress-face' and is
+exactly WIDTH visible characters wide.  Style selection is governed by
+`pending-bar-style' via `pending--bar-blocks'."
+  (let* ((blocks (pending--bar-blocks))
+         (max-i  (1- (length blocks)))
+         (clamp  (max 0.0 (min 1.0 (or fraction 0.0))))
+         (units  (truncate (* clamp width max-i)))
+         (full   (/ units max-i))
+         (partial (mod units max-i))
+         (full-char  (aref blocks max-i))
+         (empty-char (aref blocks 0))
+         (parts  '()))
+    ;; Build right-to-left so a single `apply #'concat' produces the
+    ;; final string in the correct order.  Handle the case where the
+    ;; bar is exactly full (full == width) separately so we do not push
+    ;; an extra partial cell that would overflow WIDTH.
+    (let ((empty-count (max 0 (- width full (if (< full width) 1 0)))))
+      (dotimes (_ empty-count)
+        (push empty-char parts))
+      (when (< full width)
+        (push (aref blocks partial) parts))
+      (dotimes (_ full)
+        (push full-char parts)))
+    (propertize (apply #'concat parts) 'face 'pending-progress-face)))
+
+(defconst pending--eta-ceiling (- 1.0 1e-9)
+  "Strict upper bound on the visible ETA fraction.
+Floating-point arithmetic saturates `(- 1.0 (* 0.05 (exp x)))' to
+exactly 1.0 once the exponential term drops below double-precision
+machine epsilon (around `ratio = 35').  We clamp the final value
+slightly below 1.0 so callers can rely on the strict invariant
+\"ETA fraction is in [0.0, 1.0)\".")
+
+(defun pending--eta-fraction (start-time eta &optional now)
+  "Return the visual fraction in [0.0, 1.0) for an ETA-mode bar.
+START-TIME is the `float-time' when the placeholder was created.  ETA
+is the estimated total seconds (a positive number).  NOW defaults to
+`(float-time)'.  Never returns 1.0 — saturates asymptotically toward
+1.0 past the deadline so we cannot claim \"done\" until the caller
+actually resolves.  The final value is clamped to
+`pending--eta-ceiling' so the strict upper bound holds even at large
+ratios where IEEE 754 would otherwise round to exactly 1.0.
+
+Formula (piecewise, mirroring DESIGN.md §4):
+  ratio = (now - start-time) / eta
+  ratio <= 0           -> 0
+  0 < ratio <= 0.8     -> ratio
+  0.8 < ratio <= 1.0   -> 0.8 + (ratio - 0.8) * 0.75   (linear to 0.95)
+  ratio > 1.0          -> 1 - 0.05 * exp(-(ratio - 1)) (asymptote)
+
+Yields these checkpoints:
+  t = 0      -> 0.0
+  t = 0.5 T  -> 0.5
+  t = 0.8 T  -> 0.8
+  t = T      -> 0.95
+  t = 2 T    -> ~0.9816
+  t = 4 T    -> ~0.99752"
+  (let* ((t-now (or now (float-time)))
+         (elapsed (- t-now start-time))
+         (ratio (if (and (numberp eta) (> eta 0)) (/ elapsed eta) 0.0)))
+    (cond
+     ((<= ratio 0) 0.0)
+     ((<= ratio 0.8) ratio)
+     ((<= ratio 1.0) (+ 0.8 (* (- ratio 0.8) 0.75)))
+     (t (min pending--eta-ceiling
+             (- 1.0 (* 0.05 (exp (- 1.0 ratio)))))))))
+
 (defun pending--render (p)
-  "Update P's overlay decoration for the current animation frame.
-Sets the overlay's `before-string' to the spinner glyph for the
-current frame.  No-op if the overlay has been deleted, and no-op if
-the chosen frame has not advanced since the last render."
-  (let ((ov (pending-overlay p)))
+  "Update P's overlay decoration for the current frame.
+Dispatches on `(pending-indicator p)':
+  `:spinner' — `before-string' is the spinner glyph plus a space; no
+              `after-string'.
+  `:percent' — `before-string' is the spinner glyph; `after-string'
+              is a determinate progress bar derived from
+              `(pending-percent p)' followed by the rounded percent.
+  `:eta'     — `before-string' is the spinner glyph; `after-string'
+              is a piecewise-asymptotic progress bar derived from time
+              elapsed vs `(pending-eta p)' followed by the estimated
+              remaining seconds.
+
+The spinner glyph debounces via `(pending-last-frame p)' so we only
+re-propertize the `before-string' when the frame index has actually
+moved.  The `after-string' is rebuilt every tick — rendering 10
+short bar strings per second is microsecond-scale and not worth
+caching at this stage.  No-op if the overlay has been deleted."
+  (let* ((ov (pending-overlay p))
+         (indicator (or (pending-indicator p) :spinner)))
     (when (and (overlayp ov) (overlay-buffer ov))
+      ;; Spinner glyph — same code path in every indicator mode.
       (let* ((frames (pending--get-frames
                       (or (pending-spinner-style p)
                           pending-default-spinner-style)))
@@ -497,7 +616,28 @@ the chosen frame has not advanced since the last render."
             (overlay-put
              ov 'before-string
              (propertize (concat glyph " ") 'face 'pending-spinner-face)))
-          (setf (pending-last-frame p) frame))))))
+          (setf (pending-last-frame p) frame)))
+      ;; After-string — depends on indicator mode.
+      (pcase indicator
+        (:spinner
+         (overlay-put ov 'after-string nil))
+        (:percent
+         (let* ((raw  (or (pending-percent p) 0.0))
+                (frac (max 0.0 (min 1.0 raw)))
+                (bar  (pending--render-bar frac pending-bar-width))
+                (txt  (format " %s %d%%" bar (round (* 100 frac)))))
+           (overlay-put ov 'after-string
+                        (propertize txt 'face 'pending-progress-face))))
+        (:eta
+         (let* ((eta   (or (pending-eta p) 0.001))
+                (start (or (pending-start-time p) (float-time)))
+                (now   (float-time))
+                (frac  (pending--eta-fraction start eta now))
+                (bar   (pending--render-bar frac pending-bar-width))
+                (remaining-secs (max 1 (round (- eta (- now start)))))
+                (txt   (format " %s ~%ds" bar remaining-secs)))
+           (overlay-put ov 'after-string
+                        (propertize txt 'face 'pending-progress-face))))))))
 
 (defun pending--ensure-timer ()
   "Start the global animation timer if it is not running.
@@ -792,6 +932,13 @@ LABEL, PERCENT, ETA, and INDICATOR replace the corresponding slots
 when non-nil.  No state transition happens; the next animation tick
 will pick up the new values.  Return P.
 
+After mutating slots, clear `(pending-last-frame p)' so the next
+animation tick re-renders the spinner glyph immediately rather than
+deferring to the next frame index advance — this matters for
+indicator transitions like `:spinner' to `:percent' where the
+`after-string' would otherwise lag the slot change by up to 1/FPS
+seconds.
+
 If P is in a terminal state, log a `:debug' warning and return P
 unchanged."
   (cond
@@ -807,6 +954,7 @@ unchanged."
     (when percent   (setf (pending-percent p) percent))
     (when eta       (setf (pending-eta p) eta))
     (when indicator (setf (pending-indicator p) indicator))
+    (setf (pending-last-frame p) nil)
     p)))
 
 
