@@ -130,12 +130,12 @@ The default style is selected by `pending-default-spinner-style'."
 (defcustom pending-bar-style 'eighths
   "Bar character set.
 
-`eighths' uses Unicode eighth-block characters (`▏..█`), giving
-smooth eighth-cell quantization on UTF-8 capable displays.
+`eighths' uses Unicode eighth-block characters (from `▏' to `█'),
+giving smooth eighth-cell quantization on UTF-8 capable displays.
 
-`ascii' uses plain ASCII (`. - + * #`), giving five-step
-quantization for terminals or fonts where Unicode block elements
-don't render."
+`ascii' uses plain ASCII characters (`.', `-', `+', `*', `#'),
+giving five-step quantization for terminals or fonts where Unicode
+block elements don't render."
   :type '(choice (const :tag "Eighth-block Unicode" eighths)
                  (const :tag "ASCII fallback"       ascii))
   :group 'pending
@@ -537,9 +537,9 @@ whole-cell jumps.")
 (defconst pending--bar-blocks-ascii
   ["." "." "-" "-" "+" "+" "*" "*" "#"]
   "ASCII fallback bar characters (index 0..8).
-Approximates eighths-resolution within ASCII: empty (`.`), then
-quarter (`-`), then half (`+`), then three-quarters (`*`), then full
-(`#`).  Used when `pending-bar-style' is `ascii'.")
+Approximates eighths-resolution within ASCII: empty `.', then
+quarter `-', then half `+', then three-quarters `*', then full
+\\=`#'.  Used when `pending-bar-style' is `ascii'.")
 
 (defun pending--bar-blocks ()
   "Return the bar-character vector for `pending-bar-style'.

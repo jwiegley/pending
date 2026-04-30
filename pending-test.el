@@ -597,11 +597,8 @@ The inserted label carries `read-only' text properties; calling
                        :type 'text-read-only))))))
 
 (ert-deftest pending-test/can-edit-around-placeholder ()
-  "User can freely edit text outside the placeholder.
-`front-sticky (read-only)' on the placeholder blocks insertions just
-in front, but text inserted at `point-min' (well before the
-placeholder) goes through; `rear-nonsticky (read-only)' allows text
-appended past the placeholder's end."
+  "User can edit the buffer outside the placeholder.
+Inserts at `(point-min)' and after the placeholder; both succeed."
   (pending-test--with-fresh-registry
    (pending-test--with-buffer (buf "*p-around*")
      (with-current-buffer buf
@@ -614,6 +611,29 @@ appended past the placeholder's end."
          (should (string-match-p "Pre-Before:" (buffer-string)))
          (should (string-match-p "-Post" (buffer-string)))
          (pending-resolve p "OK"))))))
+
+(ert-deftest pending-test/front-sticky-blocks-at-start ()
+  "Insertion at exactly `(overlay-start)' is blocked by `front-sticky'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-front-sticky*")
+     (with-current-buffer buf
+       (insert "Pre-")
+       (let ((p (pending-make buf :label "MID")))
+         (goto-char (overlay-start (pending-overlay p)))
+         (should-error (let ((inhibit-read-only nil)) (insert "X"))
+                       :type 'text-read-only))))))
+
+(ert-deftest pending-test/rear-nonsticky-allows-at-end ()
+  "Insertion at exactly `(overlay-end)' is allowed by `rear-nonsticky'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-rear-nonsticky*")
+     (with-current-buffer buf
+       (insert "Pre-")
+       (let ((p (pending-make buf :label "MID")))
+         (goto-char (overlay-end (pending-overlay p)))
+         (let ((inhibit-read-only nil))
+           (insert "AFTER")
+           (should (string-match-p "MIDAFTER" (buffer-string)))))))))
 
 (ert-deftest pending-test/region-deletion-cancels ()
   "Deleting the placeholder region cancels with reason `:region-deleted'.
@@ -652,6 +672,21 @@ by exactly the inserted length."
          (insert "Pre-")
          (should (= (+ 4 start-pos) (marker-position (pending-start p))))
          (should (= (+ 4 end-pos) (marker-position (pending-end p)))))))))
+
+(ert-deftest pending-test/markers-survive-edit-after ()
+  "Insertion AFTER the placeholder leaves the start and end markers fixed.
+Confirms end-marker insertion-type is nil (not yet flipped for streaming)."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-markers-after*")
+     (with-current-buffer buf
+       (insert "AB")
+       (let* ((p (pending-make buf :label "MID"))
+              (start-pos (marker-position (pending-start p)))
+              (end-pos (marker-position (pending-end p))))
+         (goto-char (point-max))
+         (insert "Post-")
+         (should (= start-pos (marker-position (pending-start p))))
+         (should (= end-pos   (marker-position (pending-end p)))))))))
 
 (ert-deftest pending-test/resolved-text-is-editable ()
   "After resolve, the text is freely editable.
