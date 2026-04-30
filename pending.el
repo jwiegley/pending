@@ -49,6 +49,12 @@
 
 (require 'cl-lib)
 
+;; Register with customize so `:package-version' on individual options
+;; resolves to a real Emacs version in M-x customize-changed.
+(when (boundp 'customize-package-emacs-version-alist)
+  (add-to-list 'customize-package-emacs-version-alist
+               '(pending ("0.1.0" . "30.1"))))
+
 
 ;;; Customization group
 
@@ -66,7 +72,7 @@ Used by the single global animation timer that walks the registry on
 each tick.  A value of 10 is the conventional sweet spot for in-buffer
 spinners — fast enough to read as motion, slow enough not to hammer
 redisplay."
-  :type 'integer
+  :type '(integer :match (lambda (_ v) (and (integerp v) (> v 0))))
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -74,7 +80,7 @@ redisplay."
   "Width of the textual progress bar, in cells.
 Used by the `:percent' and `:eta' indicators when rendering the bar
 string in the placeholder's after-string."
-  :type 'integer
+  :type '(integer :match (lambda (_ v) (and (integerp v) (> v 0))))
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -82,7 +88,12 @@ string in the placeholder's after-string."
   "Default key into `pending-spinner-styles' for new placeholders.
 Callers can override per region by passing :spinner-style to
 `pending-make'."
-  :type 'symbol
+  :type '(choice (const :tag "Braille dots (sweep)" dots-1)
+                 (const :tag "Braille dots (rotate)" dots-2)
+                 (const :tag "ASCII line" line)
+                 (const :tag "Arc" arc)
+                 (const :tag "Clock" clock)
+                 (symbol :tag "Other (must be a key of `pending-spinner-styles')"))
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -148,7 +159,7 @@ caller's behalf."
   "Maximum width, in characters, of a placeholder's visible label.
 Labels longer than this are truncated with an ellipsis; the full label
 remains available in the placeholder's tooltip."
-  :type 'integer
+  :type '(integer :match (lambda (_ v) (and (integerp v) (> v 0))))
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -243,8 +254,7 @@ counter; the symbols are not interned across Emacs sessions."
 
 (defvar pending--registry (make-hash-table :test 'eq)
   "Global hash table mapping pending id symbols to pending structs.
-Updated only by `pending--register' and `pending--unregister' (added
-in Phase 2).")
+Updated by `pending--register' and `pending--unregister'.")
 
 (defvar-local pending--buffer-registry nil
   "Buffer-local list of pending structs that live in this buffer.

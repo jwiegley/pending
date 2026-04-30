@@ -27,6 +27,16 @@
   "Smoke test: confirm `pending' is loaded."
   (should (featurep 'pending)))
 
+(ert-deftest pending-test/struct-constructor ()
+  "The Phase-1 struct constructor produces a `pending-p' value."
+  (should (pending-p (pending--make-struct :id 'p :label "x"))))
+
+(ert-deftest pending-test/gen-id-monotonic ()
+  "`pending--gen-id' returns successively-numbered symbols."
+  (let ((pending--next-id 0))
+    (should (eq (pending--gen-id) 'pending-1))
+    (should (eq (pending--gen-id) 'pending-2))))
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

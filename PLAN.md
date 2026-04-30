@@ -67,7 +67,7 @@ mechanical.
 - [ ] `(provide 'pending)`.
 
 **Exit**: byte-compile zero warnings; `(require 'pending)` succeeds;
-`(make-pending ...)` constructs an instance.
+`(pending--make-struct ...)` returns a `pending-p` value.
 
 **Mimic**: gptel's `defcustom`/`defface` style at
 `gptel/gptel.el:1088 ff`.
