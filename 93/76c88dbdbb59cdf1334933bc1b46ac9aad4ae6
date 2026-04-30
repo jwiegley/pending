@@ -1,0 +1,25 @@
+pending.el
+  2046fa0cf43c79ba 391-403,479,509-510,513,547-549,584-587,636,695-696,700-701,705
+pending-test.el
+  2046fa0cf43c79ba 24-27,243-326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "9376c88dbdbb59cdf1334933bc1b46ac9aad4ae6",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 139,
+      "total_deletions": 31,
+      "accepted_lines": 118,
+      "overriden_lines": 0
+    }
+  }
+}
