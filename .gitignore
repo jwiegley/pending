@@ -1,0 +1,5 @@
+*.elc
+/.eask/
+/dist/
+/coverage/
+/.pending/
