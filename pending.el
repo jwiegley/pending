@@ -121,11 +121,14 @@ The default style is selected by `pending-default-spinner-style'."
   :package-version '(pending . "0.1.0"))
 
 (defcustom pending-bar-style 'eighths
-  "Visual style of the progress bar.
-`eighths' uses Unicode block elements with eighth-cell resolution and
-looks best in monospace fonts that render those glyphs.  `ascii' falls
-back to plain `#' and `-' for terminals or fonts without good Unicode
-block support."
+  "Bar character set.
+
+`eighths' uses Unicode eighth-block characters (`▏..█`), giving
+smooth eighth-cell quantization on UTF-8 capable displays.
+
+`ascii' uses plain ASCII (`. - + * #`), giving five-step
+quantization for terminals or fonts where Unicode block elements
+don't render."
   :type '(choice (const :tag "Eighth-block Unicode" eighths)
                  (const :tag "ASCII fallback"       ascii))
   :group 'pending
@@ -496,11 +499,11 @@ eighth-cell resolution so the bar advances smoothly rather than in
 whole-cell jumps.")
 
 (defconst pending--bar-blocks-ascii
-  ["." "." "." "." "-" "-" "-" "-" "#"]
+  ["." "." "-" "-" "+" "+" "*" "*" "#"]
   "ASCII fallback bar characters (index 0..8).
-Approximates the 9-step quantization with `.', `-', and `#' so the bar
-renders sensibly on terminals or fonts without good Unicode block
-support.")
+Approximates eighths-resolution within ASCII: empty (`.`), then
+quarter (`-`), then half (`+`), then three-quarters (`*`), then full
+(`#`).  Used when `pending-bar-style' is `ascii'.")
 
 (defun pending--bar-blocks ()
   "Return the bar-character vector for `pending-bar-style'.
@@ -932,12 +935,8 @@ LABEL, PERCENT, ETA, and INDICATOR replace the corresponding slots
 when non-nil.  No state transition happens; the next animation tick
 will pick up the new values.  Return P.
 
-After mutating slots, clear `(pending-last-frame p)' so the next
-animation tick re-renders the spinner glyph immediately rather than
-deferring to the next frame index advance — this matters for
-indicator transitions like `:spinner' to `:percent' where the
-`after-string' would otherwise lag the slot change by up to 1/FPS
-seconds.
+Clears the spinner-glyph render cache so any indicator/style changes
+apply on the next tick.
 
 If P is in a terminal state, log a `:debug' warning and return P
 unchanged."
@@ -954,6 +953,9 @@ unchanged."
     (when percent   (setf (pending-percent p) percent))
     (when eta       (setf (pending-eta p) eta))
     (when indicator (setf (pending-indicator p) indicator))
+    ;; Force the next tick's spinner glyph to redraw even though the
+    ;; frame index hasn't advanced, so a mid-flight `:spinner-style'
+    ;; or `:indicator' change picks up immediately.
     (setf (pending-last-frame p) nil)
     p)))
 
