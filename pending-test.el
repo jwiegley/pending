@@ -1152,6 +1152,47 @@ it via `delq' so a subsequent `memq' returns nil."
      (should-not (memq pending--mode-line-construct global-mode-string)))))
 
 
+;;; Phase 9 — kill-emacs-query and demo
+
+(ert-deftest pending-test/kill-emacs-query-default-allows-exit ()
+  "With `pending-confirm-on-emacs-exit' nil, the query allows exit.
+Default behaviour: even if active placeholders are present, the
+query function returns t (no prompt, no block)."
+  (pending-test--with-fresh-registry
+   (let ((pending-confirm-on-emacs-exit nil))
+     (pending-test--with-buffer (buf "*p-kill-q*")
+       (with-current-buffer buf
+         (pending-make buf :label "X"))
+       (should (pending--kill-emacs-query))))))
+
+(ert-deftest pending-test/kill-emacs-query-empty-allows-exit ()
+  "With no active pendings, the query allows exit even when confirm is on.
+The early-out for an empty registry sidesteps the `yes-or-no-p'
+prompt, so this case is safe to call non-interactively."
+  (pending-test--with-fresh-registry
+   (let ((pending-confirm-on-emacs-exit t))
+     (should (pending--kill-emacs-query)))))
+
+(ert-deftest pending-test/demo-creates-buffer ()
+  "`pending-demo' creates the *pending-demo* buffer with three placeholders.
+Defensive cleanup cancels any remaining placeholders before killing
+the demo buffer so leftover timers cannot fire after the test ends."
+  (unwind-protect
+      (pending-test--with-fresh-registry
+       (pending-demo)
+       (let ((buf (get-buffer "*pending-demo*")))
+         (should buf)
+         (with-current-buffer buf
+           ;; Three placeholders in the demo.
+           (should (= 3 (length (pending-list-active buf)))))))
+    (when (get-buffer "*pending-demo*")
+      ;; Cancel any remaining placeholders before killing the buffer.
+      (with-current-buffer "*pending-demo*"
+        (dolist (p (pending-list-active (get-buffer "*pending-demo*")))
+          (pending-cancel p :test-cleanup)))
+      (kill-buffer "*pending-demo*"))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here
