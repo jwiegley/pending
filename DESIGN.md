@@ -457,6 +457,12 @@ dropped on the floor)."
   ...)
 ```
 
+On the first chunk, the placeholder label content is replaced by CHUNK
+and the end marker's insertion-type flips to t; subsequent chunks append
+at the (now-advancing) end marker. The user sees the loading label
+("Calling Claude") vanish and the first arriving chunk take its place,
+with subsequent chunks growing the region naturally.
+
 Streaming semantics:
 
 - Inserted text within `[start, end)` is decorated with the same
@@ -1130,6 +1136,9 @@ Cancelled in `pending--unregister`:
                    (_  (if (plist-get info :error)
                            (pending-reject p (plist-get info :error))
                          (pending-finish-stream p))))))
+    ;; Note: with :stream t and :callback, gptel routes each chunk to the
+    ;; callback; the callback inserts via pending-resolve-stream.  The
+    ;; :position keyword is just where gptel's tracking-marker starts.
     p))
 ```
 

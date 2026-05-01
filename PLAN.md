@@ -14,11 +14,11 @@ documentation. Target ship time: a focused day.
 **Goal**: file layout, build, and CI scaffolding ready before any
 real code goes in.
 
-- [ ] Create `pending.el` with package header (Author, Version,
+- [x] Create `pending.el` with package header (Author, Version,
       Package-Requires, URL, Keywords, lexical-binding cookie).
-- [ ] Create `pending-test.el` with `(require 'ert)` and a single
+- [x] Create `pending-test.el` with `(require 'ert)` and a single
       smoke test that just `(should (featurep 'pending))`.
-- [ ] Create `Eask` file:
+- [x] Create `Eask` file:
       ```elisp
       (package "pending" "0.1.0" "Async pending content placeholders")
       (author "John Wiegley" "jwiegley@gmail.com")
@@ -27,10 +27,10 @@ real code goes in.
       (script "test" "eask test ert pending-test.el")
       (depends-on "emacs" "27.1")
       ```
-- [ ] Create `Makefile` with `compile`, `test`, `clean` targets
+- [x] Create `Makefile` with `compile`, `test`, `clean` targets
       mimicking `use-package/Makefile` shape.
-- [ ] Create `LICENSE` (GPL-3.0).
-- [ ] Create `README.md` (already drafted in this directory; expand).
+- [x] Create `LICENSE` (GPL-3.0).
+- [x] Create `README.md` (already drafted in this directory; expand).
 
 **Exit**: `eask install-deps && eask compile && eask run test` runs
 clean.
@@ -43,28 +43,28 @@ clean.
 has its declaration. This is a long phase but each item is
 mechanical.
 
-- [ ] `(defgroup pending nil ...)` rooted under `'tools`.
-- [ ] `defcustom`s:
-      - [ ] `pending-fps` (default 10)
-      - [ ] `pending-bar-width` (default 16)
-      - [ ] `pending-default-spinner-style` (default `'dots-1`)
-      - [ ] `pending-spinner-styles` (alist of style-symbol →
+- [x] `(defgroup pending nil ...)` rooted under `'tools`.
+- [x] `defcustom`s:
+      - [x] `pending-fps` (default 10)
+      - [x] `pending-bar-width` (default 16)
+      - [x] `pending-default-spinner-style` (default `'dots-1`)
+      - [x] `pending-spinner-styles` (alist of style-symbol →
             frame-vector)
-      - [ ] `pending-bar-style` (`'eighths` or `'ascii`)
-      - [ ] `pending-bar-family` (default nil)
-      - [ ] `pending-fringe-bitmap` (default nil)
-      - [ ] `pending-allow-read-only` (default nil)
-      - [ ] `pending-label-max-width` (default 60)
-      - [ ] `pending-confirm-on-emacs-exit` (default nil)
-- [ ] `defface`s: `pending-face`, `pending-spinner-face`,
+      - [x] `pending-bar-style` (`'eighths` or `'ascii`)
+      - [x] `pending-bar-family` (default nil)
+      - [x] `pending-fringe-bitmap` (default nil)
+      - [x] `pending-allow-read-only` (default nil)
+      - [x] `pending-label-max-width` (default 60)
+      - [x] `pending-confirm-on-emacs-exit` (default nil)
+- [x] `defface`s: `pending-face`, `pending-spinner-face`,
       `pending-progress-face`, `pending-error-face`,
       `pending-cancelled-face`.
-- [ ] `(define-error 'pending-error "Pending placeholder error")`.
-- [ ] `cl-defstruct pending` with all slots from DESIGN.md §2.
-- [ ] `pending--next-id`, `pending--gen-id`.
-- [ ] `pending--registry` hash-table.
-- [ ] `defvar-local pending--buffer-registry`.
-- [ ] `(provide 'pending)`.
+- [x] `(define-error 'pending-error "Pending placeholder error")`.
+- [x] `cl-defstruct pending` with all slots from DESIGN.md §2.
+- [x] `pending--next-id`, `pending--gen-id`.
+- [x] `pending--registry` hash-table.
+- [x] `defvar-local pending--buffer-registry`.
+- [x] `(provide 'pending)`.
 
 **Exit**: byte-compile zero warnings; `(require 'pending)` succeeds;
 `(pending--make-struct ...)` returns a `pending-p` value.
@@ -79,19 +79,19 @@ mechanical.
 **Goal**: `pending-make` inserts a static placeholder; `resolve`,
 `reject`, `cancel` finish it; registries stay in sync.
 
-- [ ] `pending--register` and `pending--unregister` (must update
+- [x] `pending--register` and `pending--unregister` (must update
       both registries atomically).
-- [ ] `pending--swap-region` (atomic delete + insert).
-- [ ] `pending-make` — insert mode and adopt mode.
-- [ ] `pending-resolve`.
-- [ ] `pending-reject`.
-- [ ] `pending-cancel` — calls `on-cancel` callback first.
-- [ ] Single-resolution invariant: early return on terminal status.
-- [ ] `pending-update` (slot mutation only).
-- [ ] `pending-active-p`, `pending-status`, `pending-at`,
+- [x] `pending--swap-region` (atomic delete + insert).
+- [x] `pending-make` — insert mode and adopt mode.
+- [x] `pending-resolve`.
+- [x] `pending-reject`.
+- [x] `pending-cancel` — calls `on-cancel` callback first.
+- [x] Single-resolution invariant: early return on terminal status.
+- [x] `pending-update` (slot mutation only).
+- [x] `pending-active-p`, `pending-status`, `pending-at`,
       `pending-list-active`.
-- [ ] `kill-buffer-hook` cancellation entry point.
-- [ ] ERT tests for state transitions and registry sync.
+- [x] `kill-buffer-hook` cancellation entry point.
+- [x] ERT tests for state transitions and registry sync.
 
 **Exit**: state-transition tests pass.
 
@@ -105,13 +105,13 @@ mechanical.
 
 **Goal**: a placeholder animates a Unicode spinner at 10 fps.
 
-- [ ] `pending--spinner-frames-text` defconst with several styles.
-- [ ] `pending--global-timer`, `pending--ensure-timer`.
-- [ ] `pending--tick` walking the registry, dirty-tracking.
-- [ ] `pending--render` — sets `before-string` on the overlay.
-- [ ] `pending--needs-redraw-p` — visibility gate.
-- [ ] `window-buffer-change-functions` hook to wake parked timer.
-- [ ] Frame index from elapsed wall-time (so frame stays in sync
+- [x] `pending--spinner-frames-text` defconst with several styles.
+- [x] `pending--global-timer`, `pending--ensure-timer`.
+- [x] `pending--tick` walking the registry, dirty-tracking.
+- [x] `pending--render` — sets `before-string` on the overlay.
+- [x] `pending--needs-redraw-p` — visibility gate.
+- [x] `window-buffer-change-functions` hook to wake parked timer.
+- [x] Frame index from elapsed wall-time (so frame stays in sync
       across timer parks/resumes).
 
 **Exit**: a manual `pending-make` shows an animated spinner; timer
@@ -126,14 +126,14 @@ parks when buffer is hidden; resumes when shown.
 
 **Goal**: `:percent` and `:eta` indicators render correctly.
 
-- [ ] `pending--bar-blocks` defconst (eighth-block characters).
-- [ ] ASCII fallback bar.
-- [ ] `pending--render-bar` returns a propertized string.
-- [ ] `pending--eta-fraction` implementing the piecewise-asymptotic
+- [x] `pending--bar-blocks` defconst (eighth-block characters).
+- [x] ASCII fallback bar.
+- [x] `pending--render-bar` returns a propertized string.
+- [x] `pending--eta-fraction` implementing the piecewise-asymptotic
       formula from DESIGN.md §4.
-- [ ] Render dispatch on `(pending-indicator p)` — spinner /
+- [x] Render dispatch on `(pending-indicator p)` — spinner /
       percent / eta.
-- [ ] ERT tests for ETA monotonicity and the 95% asymptote.
+- [x] ERT tests for ETA monotonicity and the 95% asymptote.
 
 **Exit**: an `:eta 8` placeholder visually fills smoothly to ~95%
 in 8 seconds.
@@ -144,16 +144,16 @@ in 8 seconds.
 
 **Goal**: read-only enforcement; region-deletion auto-cancel.
 
-- [ ] Read-only properties on inserted text (`add-text-properties`
+- [x] Read-only properties on inserted text (`add-text-properties`
       with `read-only t front-sticky (read-only) rear-nonsticky
       (read-only)`).
-- [ ] Overlay `modification-hooks`, `insert-in-front-hooks`,
+- [x] Overlay `modification-hooks`, `insert-in-front-hooks`,
       `insert-behind-hooks` calling `pending--on-modify`.
-- [ ] `pending--on-modify` cancels with `:region-deleted` when the
+- [x] `pending--on-modify` cancels with `:region-deleted` when the
       overlay collapses to zero length.
-- [ ] `inhibit-read-only` bound during `pending--swap-region` and
+- [x] `inhibit-read-only` bound during `pending--swap-region` and
       `pending-resolve-stream`.
-- [ ] ERT marker-survival and read-only tests.
+- [x] ERT marker-survival and read-only tests.
 
 **Exit**: marker-survival tests pass; the user can edit before/after
 the placeholder freely but cannot edit it.
@@ -167,15 +167,15 @@ the placeholder freely but cannot edit it.
 
 **Goal**: `pending-resolve-stream` and `pending-finish-stream`.
 
-- [ ] `pending-resolve-stream` inserts at end marker (which has
+- [x] `pending-resolve-stream` inserts at end marker (which has
       insertion-type t while streaming), transitions to
       `:streaming` on first chunk.
-- [ ] Streamed text gets the same read-only properties as the
+- [x] Streamed text gets the same read-only properties as the
       initial label.
-- [ ] `pending-finish-stream` flips end marker insertion-type to
+- [x] `pending-finish-stream` flips end marker insertion-type to
       nil, removes overlay decorations, transitions to
       `:resolved`.
-- [ ] ERT tests for streaming append correctness, mid-stream
+- [x] ERT tests for streaming append correctness, mid-stream
       cancel, stream-then-resolve replacement.
 
 **Exit**: gptel integration sketch from DESIGN.md §7 works against
@@ -190,11 +190,11 @@ a real `gptel-request`.
 
 **Goal**: `pending-attach-process` and deadline timers.
 
-- [ ] `pending-attach-process` — wraps the process sentinel.
-- [ ] `pending--process-sentinel` rejects on non-clean exit.
-- [ ] `pending--start-deadline-timer`.
-- [ ] Deadline cleanup in `pending--unregister`.
-- [ ] Convenience: `pending-make :deadline N` schedules
+- [x] `pending-attach-process` — wraps the process sentinel.
+- [x] `pending--process-sentinel` rejects on non-clean exit.
+- [x] `pending--start-deadline-timer`.
+- [x] Deadline cleanup in `pending--unregister`.
+- [x] Convenience: `pending-make :deadline N` schedules
       auto-rejection.
 
 **Exit**: `:deadline 1` rejects with `:timed-out`; shell-pending
@@ -207,17 +207,18 @@ sketch from DESIGN.md §7 works end-to-end.
 **Goal**: `pending-list`, `pending-cancel-at-point`, mode-line
 lighter.
 
-- [ ] `pending-list` using `tabulated-list-mode`. Columns: ID,
+- [x] `pending-list` using `tabulated-list-mode`. Columns: ID,
       Buffer, Label, Status, Elapsed, ETA, Group.
-- [ ] `pending-list-mode` keymap: `g` refresh, `RET` jump, `c`
+- [x] `pending-list-mode` keymap: `g` refresh, `RET` jump, `c`
       cancel, `q` quit.
 - [ ] Auto-refresh on registry mutation (or polled at 1 Hz).
-- [ ] `pending-cancel-at-point` using `pending-at`.
-- [ ] `pending-overlay-map` binding `RET` and `[mouse-1]` to
+      *(Deferred to v0.2 — manual refresh via `g` for v0.1.)*
+- [x] `pending-cancel-at-point` using `pending-at`.
+- [x] `pending-overlay-map` binding `RET` and `[mouse-1]` to
       `pending-cancel-at-point`.
-- [ ] `pending-mode-line-string` returning a glyph + count + nearest
+- [x] `pending-mode-line-string` returning a glyph + count + nearest
       ETA.
-- [ ] `global-pending-lighter-mode` minor mode adding the function
+- [x] `global-pending-lighter-mode` minor mode adding the function
       to `global-mode-string`.
 
 **Exit**: `M-x pending-list` opens the list buffer; cancellation from
@@ -229,16 +230,21 @@ the list and from point both work; lighter shows summary.
 
 **Goal**: ship-ready library.
 
-- [ ] ERT test file fleshed out with all groups from DESIGN.md §8.
+- [x] ERT test file fleshed out with all groups from DESIGN.md §8.
 - [ ] `pending-test--with-mocked-time` macro for fast-forward
       testing.
-- [ ] `pending-demo` interactive command with several concurrent
+      *(Deferred to v0.2 — current tests use `sit-for` and direct
+      mutation of `pending-start-time` for determinism; a mocked-time
+      macro is nice-to-have but not required for v0.1.)*
+- [x] `pending-demo` interactive command with several concurrent
       placeholders of varying durations and modes.
-- [ ] README expanded with API table, integration recipes, comparison
+- [x] README expanded with API table, integration recipes, comparison
       to `org-pending`, screenshots/asciinema (optional).
-- [ ] `;;;###autoload` cookies on user-facing commands.
+- [x] `;;;###autoload` cookies on user-facing commands.
 - [ ] Tag `0.1.0` once everything is green.
-- [ ] Verify install via `package-vc-install` from the local repo
+      *(Tagging happens outside this implementation phase; the user
+      tags via git after merging Phase 9.)*
+- [x] Verify install via `package-vc-install` from the local repo
       path.
 
 **Exit**: `eask compile` clean; `eask test` all green; README
@@ -246,17 +252,41 @@ renders; `M-x pending-demo` looks right on light + dark themes.
 
 ---
 
+## Deferred to v0.2
+
+Items intentionally postponed past the v0.1.0 tag:
+
+- Auto-refresh of `*Pending*` list on registry mutation. Today the
+  user types `g` to refresh; v0.2 should hook the registry mutation
+  path so the list view stays live without manual interaction.
+- Pulse-on-resolve flash via `pulse.el` for a brief post-resolution
+  visual confirmation, similar to gptel's
+  `gptel-post-response-functions` integration.
+- `pending-as-promise` adapter for `aio` users — non-blocking; the
+  callback shape is the v0.1 commitment.
+- SVG spinner for graphical frames (would render with `svg.el`); v0.1
+  ships with text-only Unicode spinners.
+- Description buffer in the `*Region Lock*` style of `org-pending`
+  for richer diagnostics on a single placeholder.
+- Indirect-buffer projection of read-only properties (org-pending's
+  `--add-overlay-projection` trick), so a placeholder's edit
+  protection survives across indirect-buffer views.
+- `pending-test--with-mocked-time` macro for deterministic fast-
+  forward testing (DESIGN.md §8).
+
+---
+
 ## Cross-cutting checklist
 
 Apply to every phase:
 
-- [ ] All public functions have docstrings.
-- [ ] `byte-compile-file` warning-free.
-- [ ] `M-x checkdoc` clean.
-- [ ] Tests stay green after each phase.
-- [ ] No `(require 'org)` anywhere.
-- [ ] No `(require 'cl)` (use `cl-lib`).
-- [ ] No third-party deps (Emacs core only).
+- [x] All public functions have docstrings.
+- [x] `byte-compile-file` warning-free.
+- [x] `M-x checkdoc` clean.
+- [x] Tests stay green after each phase.
+- [x] No `(require 'org)` anywhere.
+- [x] No `(require 'cl)` (use `cl-lib`).
+- [x] No third-party deps (Emacs core only).
 
 ## Stretch / v2
 
@@ -267,6 +297,6 @@ Items intentionally left for after v1 ships:
 - `*Pending*` description buffer (org-pending-style).
 - Indirect-buffer projection.
 - `kill-emacs-query-functions` integration (gated by a defcustom
-  with default nil).
+  with default nil). *Implemented in Phase 9.*
 - Pulse-on-resolve flash.
 - Group operations (`pending-cancel-group`).
