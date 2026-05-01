@@ -1,7 +1,7 @@
 This is pending.info, produced by makeinfo version 7.2 from
 pending.texi.
 
-This manual describes Pending v0.2.0, a library for marking buffer
+This manual describes Pending v0.2.1, a library for marking buffer
 regions whose content arrives asynchronously.
 
    Copyright © 2026 John Wiegley.
@@ -20,7 +20,7 @@ File: pending.info,  Node: Top,  Next: Introduction,  Up: (dir)
 Pending
 *******
 
-This manual describes Pending v0.2.0, a library for marking buffer
+This manual describes Pending v0.2.1, a library for marking buffer
 regions whose content arrives asynchronously.
 
    Copyright © 2026 John Wiegley.

@@ -1,7 +1,7 @@
 ;; -*- mode: eask; lexical-binding: t -*-
 
 (package "pending"
-         "0.2.0"
+         "0.2.1"
          "Async pending content placeholders")
 
 (author "John Wiegley" "jwiegley@gmail.com")

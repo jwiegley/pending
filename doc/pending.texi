@@ -8,7 +8,7 @@
 @c %**end of header
 
 @copying
-This manual describes Pending v0.2.0, a library for marking buffer
+This manual describes Pending v0.2.1, a library for marking buffer
 regions whose content arrives asynchronously.
 
 Copyright @copyright{} 2026 John Wiegley.
@@ -27,7 +27,7 @@ full license text.
 @titlepage
 @title Pending
 @subtitle Async content placeholders for Emacs
-@subtitle for version 0.2.0
+@subtitle for version 0.2.1
 @author John Wiegley
 @page
 @vskip 0pt plus 1filll

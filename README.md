@@ -18,7 +18,7 @@ underlying request gets cancelled too.
 Calling Claude  ⠋ [████████░░░░░░░░] 47%
 ```
 
-**v0.2.0 — Emacs 27.1+ — BSD-3-Clause**
+**v0.2.1 — Emacs 27.1+ — BSD-3-Clause**
 
 ## At a glance
 
