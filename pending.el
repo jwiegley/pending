@@ -4,7 +4,7 @@
 
 ;; Author: John Wiegley <jwiegley@gmail.com>
 ;; Maintainer: John Wiegley <jwiegley@gmail.com>
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; URL: https://github.com/jwiegley/pending
 ;; Keywords: convenience, tools
