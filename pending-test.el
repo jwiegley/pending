@@ -1083,7 +1083,7 @@ least the two rows we made before opening the list."
            (pending-list)
            (with-current-buffer "*Pending*"
              (should (eq major-mode 'pending-list-mode))
-             (should (>= (length tabulated-list-entries) 2))))
+             (should (= (length tabulated-list-entries) 2))))
        (when (get-buffer "*Pending*")
          (kill-buffer "*Pending*"))))))
 
@@ -1124,15 +1124,32 @@ With one active placeholder, the string contains the count digit `1'."
          (should (stringp s))
          (should (string-match-p "1" s)))))))
 
+(ert-deftest pending-test/mode-line-shows-smallest-eta ()
+  "When two placeholders have ETAs, lighter shows the smaller remaining time."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-min-eta*")
+     (with-current-buffer buf
+       (let ((p1 (pending-make buf :label "fast" :indicator :eta :eta 5.0))
+             (p2 (pending-make buf :label "slow" :indicator :eta :eta 100.0)))
+         ;; Force start-times to known values for determinism.
+         (setf (pending-start-time p1) (- (float-time) 1.0))
+         (setf (pending-start-time p2) (- (float-time) 1.0))
+         (let ((s (pending-mode-line-string)))
+           (should (stringp s))
+           ;; The smaller remaining ETA is ~4s (5 - 1), not ~99s.
+           (should (string-match-p "~[1-9]s" s))
+           (should-not (string-match-p "~9[0-9]s" s))))))))
+
 (ert-deftest pending-test/lighter-mode-toggles ()
   "`global-pending-lighter-mode' adds and removes the mode-line construct.
 Toggling on adds the shared sentinel by `memq'; toggling off removes
 it via `delq' so a subsequent `memq' returns nil."
-  (let ((global-mode-string nil))
-    (global-pending-lighter-mode 1)
-    (should (memq pending--mode-line-construct global-mode-string))
-    (global-pending-lighter-mode -1)
-    (should-not (memq pending--mode-line-construct global-mode-string))))
+  (pending-test--with-fresh-registry
+   (let ((global-mode-string nil))
+     (global-pending-lighter-mode 1)
+     (should (memq pending--mode-line-construct global-mode-string))
+     (global-pending-lighter-mode -1)
+     (should-not (memq pending--mode-line-construct global-mode-string)))))
 
 
 (provide 'pending-test)

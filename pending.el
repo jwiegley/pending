@@ -1202,7 +1202,7 @@ is logged."
 
 ;;; Public API: process integration
 
-(defun pending--process-sentinel (p proc _event)
+(defun pending--process-sentinel (p process _event)
   "Internal sentinel handling PROCESS lifecycle for pending P.
 Reads the live process state via `process-status':
 
@@ -1216,22 +1216,22 @@ Reads the live process state via `process-status':
 The kernel-level status is authoritative — the EVENT string is
 localized and varies across process types, but `process-status'
 is a documented C-API symbol.  Notably this means non-terminal
-events such as `\"open\\n\"' (network connect), `\"run\\n\"'
-(resumed from stop), and `\"stopped\\n\"' (SIGSTOP/SIGTSTP) are
+events such as `\"open\\n\"' \(network connect), `\"run\\n\"'
+\(resumed from stop), and `\"stopped\\n\"' \(SIGSTOP/SIGTSTP) are
 correctly treated as no-ops."
   (when (pending-active-p p)
-    (let ((status (process-status proc)))
+    (let ((status (process-status process)))
       (pcase status
         ('exit
          ;; Clean exit but no explicit resolve.
-         (let ((code (process-exit-status proc)))
+         (let ((code (process-exit-status process)))
            (if (zerop code)
                (pending-reject p "process exited without resolving")
              (pending-reject p (format "process: exited with code %d" code)))))
         ('signal
          ;; Killed by a signal.  process-exit-status returns the signal number.
          (pending-reject p (format "process: killed (signal %d)"
-                                   (process-exit-status proc))))
+                                   (process-exit-status process))))
         ('failed
          (pending-reject p "process: failed"))
         ('closed
@@ -1411,7 +1411,13 @@ directly via `tabulated-list-get-id'.
           (lambda (a b)
             (< (string-to-number (aref (cadr a) 4))
                (string-to-number (aref (cadr b) 4)))))
-         ("ETA" 8 t)
+         ("ETA" 8
+          (lambda (a b)
+            (let ((va (string-to-number (aref (cadr a) 5)))
+                  (vb (string-to-number (aref (cadr b) 5))))
+              (when (zerop va) (setq va most-positive-fixnum))
+              (when (zerop vb) (setq vb most-positive-fixnum))
+              (< va vb))))
          ("Group" 10 t)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key '("ID" . nil))
@@ -1500,7 +1506,8 @@ column.  Bindings: `g' refresh, `RET' jump to placeholder, `c' cancel,
   (interactive)
   (let ((buf (get-buffer-create "*Pending*")))
     (with-current-buffer buf
-      (pending-list-mode)
+      (unless (derived-mode-p 'pending-list-mode)
+        (pending-list-mode))
       (pending--list-populate)
       (tabulated-list-print t))
     (pop-to-buffer buf)))
@@ -1522,13 +1529,16 @@ carries a `help-echo' tooltip describing the count."
          (count (length actives)))
     (when (> count 0)
       (let* ((next-eta
-              (cl-some
-               (lambda (p)
-                 (when-let* ((eta (pending-eta p))
-                             (st  (pending-start-time p)))
-                   (let ((rem (- eta (- (float-time) st))))
-                     (when (> rem 0) rem))))
-               actives))
+              (let ((rems
+                     (delq nil
+                           (mapcar
+                            (lambda (p)
+                              (when-let* ((eta (pending-eta p))
+                                          (st  (pending-start-time p)))
+                                (let ((rem (- eta (- (float-time) st))))
+                                  (and (> rem 0) rem))))
+                            actives))))
+                (when rems (apply #'min rems))))
              (eta-text (if next-eta
                            (format "~%ds" (max 1 (round next-eta)))
                          ""))
