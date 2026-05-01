@@ -27,7 +27,12 @@
 ;; cancel, stream-then-resolve replacement, the empty-chunk no-op,
 ;; read-only enforcement on streamed text, and the
 ;; `pending-finish-stream' read-only strip and never-streamed
-;; fallback behaviour.
+;; fallback behaviour; Phase 7 covers process integration —
+;; `pending-attach-process' wrapping a process sentinel so that
+;; clean exits and failure exits both translate to the right
+;; rejection, that resolving before the process exits leaves the
+;; sentinel a no-op, and that a pre-existing sentinel still fires
+;; when chained.
 
 ;;; Code:
 
@@ -839,6 +844,98 @@ placeholder removed and replaced by the empty string."
          (should (eq (pending-status p) :resolved))
          (should (string-match-p "Before:" (buffer-string)))
          (should-not (string-match-p "X" (buffer-string))))))))
+
+
+;;; Phase 7 — process integration
+
+(ert-deftest pending-test/process-clean-exit-rejects ()
+  "A clean process exit on an unresolved placeholder rejects.
+The wrapper sentinel installed by `pending-attach-process'
+detects a `\"finished\"' event while P is still active and
+rejects with the reason `\"process exited without resolving\"'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-proc-clean*")
+     (with-current-buffer buf
+       (let* ((p (pending-make buf :label "X"))
+              (proc (start-process "p-test-clean" nil "true")))
+         (pending-attach-process p proc)
+         ;; Wait for the process to exit (true returns immediately).
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (process-live-p proc) (< (float-time) deadline))
+             (accept-process-output proc 0.1)))
+         ;; The sentinel runs asynchronously; give it a chance.
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (pending-active-p p) (< (float-time) deadline))
+             (sit-for 0.05)))
+         (should (eq (pending-status p) :rejected))
+         (should (string-match-p "without resolving"
+                                 (or (pending-reason p) ""))))))))
+
+(ert-deftest pending-test/process-failure-rejects ()
+  "A non-zero process exit rejects with a `process:' reason.
+The wrapper sentinel detects an `\"exited abnormally\"' event and
+rejects with `\"process: ...\"' formed from the trimmed event
+string."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-proc-fail*")
+     (with-current-buffer buf
+       (let* ((p (pending-make buf :label "X"))
+              (proc (start-process "p-test-fail" nil "false")))
+         (pending-attach-process p proc)
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (process-live-p proc) (< (float-time) deadline))
+             (accept-process-output proc 0.1)))
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (pending-active-p p) (< (float-time) deadline))
+             (sit-for 0.05)))
+         (should (eq (pending-status p) :rejected))
+         (should (stringp (pending-reason p)))
+         (should (string-match-p "process:" (pending-reason p))))))))
+
+(ert-deftest pending-test/process-resolved-before-exit ()
+  "Resolving before the process exits leaves the sentinel a no-op.
+If the caller calls `pending-resolve' BEFORE the process exits,
+the wrapper sentinel's `pending-reject' call hits the
+single-resolution guard and is suppressed; status stays
+`:resolved'."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-proc-resolve*")
+     (with-current-buffer buf
+       (let* ((warning-minimum-log-level :error)
+              (p (pending-make buf :label "X"))
+              (proc (start-process "p-test-resolved" nil "sleep" "0.1")))
+         (pending-attach-process p proc)
+         (pending-resolve p "manual-resolve")
+         ;; Wait for the process to exit; sentinel should be a no-op.
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (process-live-p proc) (< (float-time) deadline))
+             (accept-process-output proc 0.1)))
+         ;; Status should still be :resolved, not :rejected.
+         (should (eq (pending-status p) :resolved))
+         (should (string-match-p "manual-resolve" (buffer-string))))))))
+
+(ert-deftest pending-test/process-existing-sentinel-still-fires ()
+  "Attaching to a process that already has a sentinel chains them.
+The caller-installed sentinel runs FIRST, then the wrapper
+runs.  Both side effects (the user's flag and the placeholder
+rejection) are observed."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-proc-chain*")
+     (with-current-buffer buf
+       (let* ((p (pending-make buf :label "X"))
+              (sentinel-flag nil)
+              (proc (start-process "p-test-chain" nil "true")))
+         (set-process-sentinel proc (lambda (_proc _event)
+                                      (setq sentinel-flag t)))
+         (pending-attach-process p proc)
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (process-live-p proc) (< (float-time) deadline))
+             (accept-process-output proc 0.1)))
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (pending-active-p p) (< (float-time) deadline))
+             (sit-for 0.05)))
+         (should sentinel-flag)
+         (should (eq (pending-status p) :rejected)))))))
 
 
 (provide 'pending-test)

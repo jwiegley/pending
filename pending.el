@@ -39,33 +39,39 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides Phase 6: the core lifecycle plus
+;; This file currently provides Phase 7: the core lifecycle plus
 ;; spinner animation plus determinate and ETA progress bars plus
-;; edit-survival plus streaming.  On top of the Phase 1 skeleton
-;; (customization group, faces, struct, error symbol, registries)
-;; and Phase 2 core lifecycle (`pending-make' in insert and adopt
-;; modes, `pending-resolve', `pending-reject', `pending-cancel',
-;; `pending-update', the public predicates and accessors, registry
-;; sync, the `kill-buffer-hook' teardown), Phase 3 added a single
-;; global animation timer that walks the registry and decorates each
-;; visible placeholder's overlay `before-string' with a spinner glyph.
-;; Phase 4 dispatches the after-string render on
-;; `(pending-indicator p)' so `:percent' shows a determinate bar plus
-;; a percentage and `:eta' shows a piecewise-asymptotic bar plus a
-;; remaining-seconds estimate.  Phase 5 makes inserted placeholder
-;; text read-only via text properties (`front-sticky' on `read-only'
-;; so insertions just before it are blocked too, `rear-nonsticky' on
-;; `read-only' so insertions just after it are allowed) and installs
-;; overlay modification-hooks that auto-cancel the placeholder with
-;; reason `:region-deleted' when the user collapses its overlay to
-;; zero length.  Phase 6 adds `pending-resolve-stream' and
+;; edit-survival plus streaming plus process integration.  On top of
+;; the Phase 1 skeleton (customization group, faces, struct, error
+;; symbol, registries) and Phase 2 core lifecycle (`pending-make' in
+;; insert and adopt modes, `pending-resolve', `pending-reject',
+;; `pending-cancel', `pending-update', the public predicates and
+;; accessors, registry sync, the `kill-buffer-hook' teardown),
+;; Phase 3 added a single global animation timer that walks the
+;; registry and decorates each visible placeholder's overlay
+;; `before-string' with a spinner glyph.  Phase 4 dispatches the
+;; after-string render on `(pending-indicator p)' so `:percent' shows
+;; a determinate bar plus a percentage and `:eta' shows a
+;; piecewise-asymptotic bar plus a remaining-seconds estimate.
+;; Phase 5 makes inserted placeholder text read-only via text
+;; properties (`front-sticky' on `read-only' so insertions just
+;; before it are blocked too, `rear-nonsticky' on `read-only' so
+;; insertions just after it are allowed) and installs overlay
+;; modification-hooks that auto-cancel the placeholder with reason
+;; `:region-deleted' when the user collapses its overlay to zero
+;; length.  Phase 6 adds `pending-resolve-stream' and
 ;; `pending-finish-stream' for incremental content delivery: the
 ;; first chunk flips the end marker's insertion-type to t and
 ;; transitions status to `:streaming', subsequent chunks append at
 ;; the end marker and grow the overlay so decorations and edit
 ;; protection track the streamed text, and `pending-finish-stream'
 ;; locks the marker, strips read-only, and finalizes to `:resolved'.
-;; The interactive lister and process integration are still to come.
+;; Phase 7 adds `pending-attach-process': the supplied process's
+;; sentinel is wrapped so that a clean exit while the placeholder
+;; is still active rejects with \"process exited without resolving\"
+;; and any failure event rejects with the trimmed event string,
+;; while any pre-existing sentinel runs first so caller-installed
+;; behaviour is preserved.  The interactive lister is still to come.
 
 ;;; Code:
 
@@ -331,6 +337,11 @@ result of this removal."
     (when (timerp tm)
       (cancel-timer tm))
     (setf (pending-attached-timer p) nil))
+  ;; Note: the wrapper sentinel installed on `attached-process' (when
+  ;; any) is left in place — detaching it here would race the active
+  ;; sentinel callback we may be running inside of right now.  If the
+  ;; process exits later, the call to `pending-reject' from the
+  ;; wrapper is a no-op because the placeholder is already terminal.
   (when (zerop (hash-table-count pending--registry))
     (pending--park-timer)))
 
@@ -1110,7 +1121,11 @@ is logged."
     (pending-resolve p ""))
    (t
     ;; In :streaming state — finalize without re-swapping the buffer
-    ;; text (it already holds the streamed content).
+    ;; text (it already holds the streamed content).  Buffer-mutation
+    ;; bits run inside `with-current-buffer' and are skipped if the
+    ;; buffer has died; lifecycle bookkeeping (status flip,
+    ;; unregister, marker-nil, on-resolve) ALWAYS runs so the
+    ;; placeholder cannot get stranded in `:streaming'.
     (let ((buf (pending-buffer p)))
       (when (buffer-live-p buf)
         (with-current-buffer buf
@@ -1127,8 +1142,6 @@ is logged."
               (remove-text-properties
                start end
                '(read-only nil front-sticky nil rear-nonsticky nil))))
-          (setf (pending-status p) :resolved
-                (pending-resolved-at p) (float-time))
           ;; Strip animated overlay decorations, then delete the
           ;; overlay so the resolved text no longer carries any
           ;; placeholder-specific properties.
@@ -1136,26 +1149,106 @@ is logged."
             (when (and (overlayp ov) (overlay-buffer ov))
               (overlay-put ov 'before-string nil)
               (overlay-put ov 'after-string nil)
-              (delete-overlay ov))
-            (setf (pending-overlay p) nil))
-          (pending--unregister p)
-          ;; Clear markers, mirroring `pending--resolve-internal'.
-          (let ((sm (pending-start p))
-                (em (pending-end p)))
-            (when (markerp sm) (set-marker sm nil))
-            (when (markerp em) (set-marker em nil)))
-          ;; Fire on-resolve safely; a buggy callback must not crash
-          ;; the finalize path.
-          (when (pending-on-resolve p)
-            (condition-case err
-                (funcall (pending-on-resolve p) p)
-              (error
-               (display-warning
-                'pending
-                (format "on-resolve callback for %s signaled: %S"
-                        (pending-id p) err)
-                :error))))
-          t))))))
+              (delete-overlay ov)))))
+      ;; Always run lifecycle bookkeeping, even if the buffer died.
+      (setf (pending-overlay p) nil
+            (pending-status p) :resolved
+            (pending-resolved-at p) (float-time))
+      (pending--unregister p)
+      ;; Clear markers, mirroring `pending--resolve-internal'.
+      (when (markerp (pending-start p))
+        (set-marker (pending-start p) nil))
+      (when (markerp (pending-end p))
+        (set-marker (pending-end p) nil))
+      ;; Fire on-resolve safely; a buggy callback must not crash
+      ;; the finalize path.
+      (when (pending-on-resolve p)
+        (condition-case err
+            (funcall (pending-on-resolve p) p)
+          (error
+           (display-warning
+            'pending
+            (format "on-resolve callback for %s signaled: %S"
+                    (pending-id p) err)
+            :error))))
+      t))))
+
+
+;;; Public API: process integration
+
+(defun pending--process-sentinel (p _proc event)
+  "Internal sentinel translating PROCESS lifecycle EVENT into a transition.
+P is the pending struct attached to the process; EVENT is the
+standard sentinel event string — `\"finished\\n\"', `\"exited
+abnormally with code N\\n\"', `\"killed\\n\"', etc.
+If P is already terminal this is a no-op (the single-resolution
+guard inside `pending-reject' would also make it a no-op, but we
+skip the work explicitly).
+Otherwise:
+  - On a clean `\"finished\"' event, reject with the reason
+    `\"process exited without resolving\"' — the process completed
+    but the caller never explicitly resolved P.
+  - On any failure event (`\"exited abnormally\"', `\"killed\"',
+    `\"broken pipe\"', or any other non-empty event), reject with
+    `\"process: TRIMMED-EVENT\"'."
+  (when (pending-active-p p)
+    (let ((trimmed (string-trim event)))
+      (cond
+       ((string-prefix-p "finished" event)
+        ;; Clean process exit but no explicit resolve from caller.
+        (pending-reject p "process exited without resolving"))
+       ((or (string-prefix-p "exited abnormally" event)
+            (string-prefix-p "killed" event)
+            (string-prefix-p "broken pipe" event)
+            ;; Anything else non-empty — open vs deletion notices,
+            ;; \"failed\", whatever.  The empty-event guard avoids
+            ;; rejecting on the harmless `\"open\\n\"' sentinel calls
+            ;; that some process types emit.
+            (and (not (string-empty-p trimmed))
+                 (not (string-prefix-p "finished" event))))
+        (pending-reject p (format "process: %s" trimmed)))))))
+
+(defun pending-attach-process (p process)
+  "Wire PROCESS so that its death rejects P appropriately.
+P is a pending struct returned by `pending-make'.  PROCESS is a
+process object (typically returned by `make-process' or
+`start-process').
+The process's existing sentinel, if any, is preserved: it runs
+FIRST, then a wrapper handles automatic state transitions.  Errors
+signalled from the existing sentinel are caught and reported as
+`pending' warnings so a buggy caller-installed sentinel does not
+prevent the wrapper's lifecycle handling.
+Lifecycle handling (in the wrapper):
+  - `\"finished\"' (clean exit) — if P is still active, reject with
+    \"process exited without resolving\".  This represents a
+    process that ran to completion but the caller did not call
+    `pending-resolve' on P explicitly.
+  - `\"exited abnormally\"', `\"killed\"', `\"broken pipe\"', and
+    other failure modes — reject with the trimmed event string.
+If multiple processes are attached over P's lifetime, the LAST
+attach wins for the `attached-process' slot, but each prior
+process's wrapper sentinel still chains through to its predecessor
+— so a stale process exit will still flow into `pending-reject',
+which is a no-op once P is terminal because of the
+single-resolution guard.
+The PROCESS reference is stored in P's `attached-process' slot.
+Return P."
+  (let ((existing (process-sentinel process)))
+    (setf (pending-attached-process p) process)
+    (set-process-sentinel
+     process
+     (lambda (proc event)
+       (when existing
+         (condition-case err
+             (funcall existing proc event)
+           (error
+            (display-warning
+             'pending
+             (format "existing sentinel for process %s signaled: %S"
+                     (process-name proc) err)
+             :error))))
+       (pending--process-sentinel p proc event))))
+  p)
 
 
 ;;; Public API: mid-flight updates
