@@ -1538,6 +1538,91 @@ flash hits exactly the inserted text."
           (should (= 0 (length calls))))))))
 
 
+;;; v0.2 — fringe bitmap indicator
+
+(ert-deftest pending-test/fringe-bitmap-stashed-when-set ()
+  "When `pending-fringe-bitmap' is set, overlay records a fringe display.
+The fringe string is stashed under `pending--fringe-string' on the
+overlay so `pending--render' can prepend it to whatever spinner /
+lighter glyph the indicator wants in `before-string'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-fringe*")
+      (with-current-buffer buf
+        (let ((pending-fringe-bitmap 'right-arrow))
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda () t)))
+            (let* ((p (pending-make buf :label "X"))
+                   (stashed (overlay-get (pending-ov p) 'pending--fringe-string)))
+              (should stashed)
+              (let ((display (get-text-property 0 'display stashed)))
+                (should display)
+                (should (eq (car display) 'left-fringe))
+                (should (eq (cadr display) 'right-arrow))))))))))
+
+(ert-deftest pending-test/fringe-bitmap-skipped-in-tty ()
+  "When `display-graphic-p' is nil, no fringe stash is recorded."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-fringe-tty*")
+      (with-current-buffer buf
+        (let ((pending-fringe-bitmap 'right-arrow))
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda () nil)))
+            (let* ((p (pending-make buf :label "X"))
+                   (stashed (overlay-get (pending-ov p) 'pending--fringe-string)))
+              (should-not stashed))))))))
+
+(ert-deftest pending-test/fringe-bitmap-disabled-by-default ()
+  "When `pending-fringe-bitmap' is nil (default), no stash is recorded."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-fringe-off*")
+      (with-current-buffer buf
+        (let ((pending-fringe-bitmap nil))
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda () t)))
+            (let* ((p (pending-make buf :label "X"))
+                   (stashed (overlay-get (pending-ov p) 'pending--fringe-string)))
+              (should-not stashed))))))))
+
+(ert-deftest pending-test/fringe-bitmap-prepended-in-render ()
+  "`pending--render' prepends the stashed fringe string to the spinner glyph.
+With a fringe-bitmap set and the visibility gate forced open in
+batch, a spinner-mode placeholder's `before-string' starts with
+the fringe display proxy and is followed by the spinner glyph."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-fringe-render*")
+      (with-current-buffer buf
+        (let ((pending-fringe-bitmap 'right-arrow))
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda () t))
+                    ((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) t)))
+            (let ((p (pending-make buf :label "X")))
+              (pending--tick)
+              (let* ((bs (overlay-get (pending-ov p) 'before-string))
+                     (display (get-text-property 0 'display bs)))
+                (should (stringp bs))
+                ;; The leading character carries the fringe-display
+                ;; proxy with our bitmap.
+                (should display)
+                (should (eq (car display) 'left-fringe))
+                (should (eq (cadr display) 'right-arrow))
+                ;; The spinner-glyph block trails the fringe proxy.
+                (should (> (length bs) 1))))))))))
+
+(ert-deftest pending-test/fringe-bitmap-prepended-on-lighter ()
+  "Lighter mode also picks up the fringe stash via `pending--render'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-fringe-lighter*")
+      (with-current-buffer buf
+        (let ((pending-fringe-bitmap 'right-arrow))
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda () t)))
+            (let* ((tok (pending-insert (point-min) "static"))
+                   (bs (overlay-get (pending-ov tok) 'before-string))
+                   (display (get-text-property 0 'display bs)))
+              (should (stringp bs))
+              (should display)
+              (should (eq (car display) 'left-fringe))
+              (should (eq (cadr display) 'right-arrow))
+              ;; The lighter badge follows the fringe proxy.
+              (should (string-match-p "static" bs)))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

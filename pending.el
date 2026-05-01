@@ -224,6 +224,21 @@ option does not pull the library in for users who set it nil."
   :group 'pending
   :package-version '(pending . "0.2.0"))
 
+(defcustom pending-fringe-bitmap nil
+  "If non-nil, fringe bitmap symbol shown beside each pending region.
+A symbol naming a registered fringe bitmap (e.g. `right-arrow' or a
+custom bitmap from `define-fringe-bitmap').  When non-nil, the
+placeholder overlay carries a fringe-display proxy in its
+`before-string' so the bitmap renders in the left fringe of the
+window line that contains the placeholder, giving an off-screen-
+visible cue that scrolls with the buffer.
+
+This is purely decorative and only renders in graphical frames
+\(see `display-graphic-p').  Set to nil to disable."
+  :type '(choice (const :tag "Off" nil) symbol)
+  :group 'pending
+  :package-version '(pending . "0.2.0"))
+
 
 ;;; Faces
 
@@ -813,7 +828,12 @@ caching at this stage.  No-op if the overlay has been deleted.
 In `:lighter' mode the spinner-glyph block is skipped entirely so
 no animation cost is paid; the badge is rendered once below."
   (let* ((ov (pending-ov p))
-         (indicator (or (pending-indicator p) :spinner)))
+         (indicator (or (pending-indicator p) :spinner))
+         ;; Optional fringe-bitmap proxy stashed by `pending-make'.
+         ;; Prepended to whatever the indicator wants in
+         ;; `before-string' so the fringe cue scrolls with the line
+         ;; and survives the frame-index debounce path below.
+         (fringe (overlay-get ov 'pending--fringe-string)))
     (when (and (overlayp ov) (overlay-buffer ov))
       ;; Spinner glyph — same code path in every indicator mode except
       ;; `:lighter', which uses a static badge in `before-string' below
@@ -824,10 +844,12 @@ no animation cost is paid; the badge is rendered once below."
                             pending-default-spinner-style)))
                (frame (pending--frame-index p frames)))
           (unless (eql frame (pending-last-frame p))
-            (let ((glyph (aref frames frame)))
+            (let* ((glyph (aref frames frame))
+                   (glyph-str (propertize (concat glyph " ")
+                                          'face 'pending-spinner-face)))
               (overlay-put
                ov 'before-string
-               (propertize (concat glyph " ") 'face 'pending-spinner-face)))
+               (if fringe (concat fringe glyph-str) glyph-str)))
             (setf (pending-last-frame p) frame))))
       ;; Mode-specific decoration.
       (pcase indicator
@@ -851,9 +873,10 @@ no animation cost is paid; the badge is rendered once below."
            (overlay-put ov 'after-string
                         (propertize txt 'face 'pending-progress-face))))
         (:lighter
-         (overlay-put ov 'before-string
-                      (propertize (or (pending-label p) "")
-                                  'face 'pending-lighter))
+         (let ((badge (propertize (or (pending-label p) "")
+                                  'face 'pending-lighter)))
+           (overlay-put ov 'before-string
+                        (if fringe (concat fringe badge) badge)))
          (overlay-put ov 'after-string nil))))))
 
 (defun pending--ensure-timer ()
@@ -1100,6 +1123,22 @@ position falls outside BUFFER's bounds."
             (overlay-put ov 'face resolved-face))))
       (overlay-put ov 'priority 100)
       (overlay-put ov 'evaporate nil)
+      ;; Optional fringe-bitmap proxy.  When `pending-fringe-bitmap'
+      ;; names a registered fringe bitmap and we are on a graphical
+      ;; frame, stash a 1-character string whose `display' property
+      ;; is `(left-fringe BITMAP pending-spinner-face)'.  The render
+      ;; loop prepends this to whatever spinner / lighter glyph the
+      ;; indicator wants in `before-string', so the placeholder
+      ;; carries a fringe cue that scrolls with the buffer line.
+      ;; Skipped on tty per `display-graphic-p'.
+      (when (and pending-fringe-bitmap (display-graphic-p))
+        (overlay-put
+         ov 'pending--fringe-string
+         (propertize "!"
+                     'display
+                     (list 'left-fringe
+                           pending-fringe-bitmap
+                           'pending-spinner-face))))
       ;; Modification hooks fire on user edits inside the region or at
       ;; its edges.  They detect the "user deleted the placeholder"
       ;; case and auto-cancel with `:region-deleted'.
