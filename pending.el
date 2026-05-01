@@ -16,61 +16,38 @@
 
 ;;; Commentary:
 
-;; A standalone Emacs Lisp library for marking buffer regions whose
-;; content will be supplied asynchronously, with animated progress
-;; indication.
+;; Mark a buffer region (or a single point) as "the answer goes here,
+;; hold tight," let some async work run, then atomically swap the
+;; placeholder for the result.  One undo step.  The placeholder text
+;; is read-only while it's active, so the user can't accidentally type
+;; into it; if they delete it, the underlying request gets cancelled.
 ;;
-;; Insert a colored placeholder where some asynchronously computed text
-;; is going to appear, optionally with a spinner or progress bar, then
-;; atomically replace it with the result when ready.  Use cases include
-;; LLM streaming responses, long-running shell commands, network
-;; fetches, and arbitrary callback-driven work.
+;; The original itch was gptel: I'd send a prompt and the buffer would
+;; sit there, no marker for where the answer would land, no indication
+;; anything was happening.  This solves that for any callback-driven
+;; async pattern -- gptel, `make-process', `url-retrieve', plain
+;; timers.
 ;;
-;; See `DESIGN.md' in this package for the canonical reference on the
-;; API, visual design, lifecycle, and implementation plan.
+;; Three pieces worth knowing up front:
 ;;
-;; This file currently provides Phase 8: the core lifecycle plus
-;; spinner animation plus determinate and ETA progress bars plus
-;; edit-survival plus streaming plus process integration plus the
-;; interactive UI (a tabulated-list lister, a cancel-at-point
-;; command, the overlay keymap, and an opt-in mode-line lighter).
-;; On top of the Phase 1 skeleton (customization group, faces,
-;; struct, error symbol, registries) and Phase 2 core lifecycle
-;; (`pending-make' in insert and adopt modes, `pending-finish',
-;; `pending-reject', `pending-cancel', `pending-update', the public
-;; predicates and accessors, registry sync, the `kill-buffer-hook'
-;; teardown), Phase 3 added a single global animation timer that
-;; walks the registry and decorates each visible placeholder's
-;; overlay `before-string' with a spinner glyph.  Phase 4 dispatches
-;; the after-string render on `(pending-indicator p)' so `:percent'
-;; shows a determinate bar plus a percentage and `:eta' shows a
-;; piecewise-asymptotic bar plus a remaining-seconds estimate.
-;; Phase 5 makes inserted placeholder text read-only via text
-;; properties (`front-sticky' on `read-only' so insertions just
-;; before it are blocked too, `rear-nonsticky' on `read-only' so
-;; insertions just after it are allowed) and installs overlay
-;; modification-hooks that auto-cancel the placeholder with reason
-;; `:region-deleted' when the user collapses its overlay to zero
-;; length.  Phase 6 adds `pending-stream-insert' and
-;; `pending-stream-finish' for incremental content delivery: the
-;; first chunk flips the end marker's insertion-type to t and
-;; transitions status to `:streaming', subsequent chunks append at
-;; the end marker and grow the overlay so decorations and edit
-;; protection track the streamed text, and `pending-stream-finish'
-;; locks the marker, strips read-only, and finalizes to `:resolved'.
-;; Phase 7 adds `pending-attach-process': the supplied process's
-;; sentinel is wrapped so that a clean exit while the placeholder
-;; is still active rejects with \"process exited without resolving\"
-;; and any failure event rejects with the trimmed event string,
-;; while any pre-existing sentinel runs first so caller-installed
-;; behaviour is preserved.  Phase 8 adds the interactive UI:
-;; `pending-cancel-at-point' for cancelling the placeholder at
-;; point, an overlay `keymap' so RET and mouse-1 invoke that
-;; command, `pending-list' (a `tabulated-list-mode' buffer with
-;; columns ID/Buffer/Label/Status/Elapsed/ETA/Group and bindings g
-;; refresh / RET jump / c cancel / q quit), and the optional
-;; `global-pending-lighter-mode' minor mode that adds a count plus
-;; nearest-ETA construct to `global-mode-string'.
+;;   - The token returned by every constructor is the only handle.
+;;     Pass it to `pending-finish', `pending-cancel', `pending-update'.
+;;     Once a token is terminal, all operations are no-ops with a
+;;     `:debug' warning.
+;;
+;;   - All terminal transitions go through `pending--resolve-internal'.
+;;     One mutation path, one place that flips status, fires
+;;     `:on-resolve', and tears down the overlay.  This was important
+;;     to get right -- earlier drafts had four code paths and they
+;;     drifted.
+;;
+;;   - One global timer drives every spinner, ticking at `pending-fps'.
+;;     N pending regions don't mean N timers.  The timer parks itself
+;;     when the registry is empty and re-arms when a placeholder's
+;;     buffer becomes visible again.
+;;
+;; See `DESIGN.md' for the long-form design rationale and `README.md'
+;; for the API tour.
 
 ;;; Code:
 
@@ -1793,8 +1770,8 @@ signalled from the existing sentinel are caught and reported as
 `pending' warnings so a buggy caller-installed sentinel does not
 prevent the wrapper's lifecycle handling.
 Lifecycle handling (in the wrapper) consults `process-status', not
-the event string, so it is robust against localization and works
-correctly for non-terminal events such as `\"open\\n\"' (network
+the event string, so it survives localized event strings and handles
+non-terminal events such as `\"open\\n\"' (network
 connect), `\"run\\n\"' (resumed), and `\"stopped\\n\"' (suspended):
   - `exit' status with code 0 — if P is still active, reject with
     \"process exited without resolving\".  This represents a
