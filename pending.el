@@ -51,12 +51,12 @@
 ;; insertions just after it are allowed) and installs overlay
 ;; modification-hooks that auto-cancel the placeholder with reason
 ;; `:region-deleted' when the user collapses its overlay to zero
-;; length.  Phase 6 adds `pending-resolve-stream' and
-;; `pending-finish-stream' for incremental content delivery: the
+;; length.  Phase 6 adds `pending-stream-insert' and
+;; `pending-stream-finish' for incremental content delivery: the
 ;; first chunk flips the end marker's insertion-type to t and
 ;; transitions status to `:streaming', subsequent chunks append at
 ;; the end marker and grow the overlay so decorations and edit
-;; protection track the streamed text, and `pending-finish-stream'
+;; protection track the streamed text, and `pending-stream-finish'
 ;; locks the marker, strips read-only, and finalizes to `:resolved'.
 ;; Phase 7 adds `pending-attach-process': the supplied process's
 ;; sentinel is wrapped so that a clean exit while the placeholder
@@ -1255,7 +1255,7 @@ Return t on success, or nil if P was already terminal."
 
 ;;; Public API: streaming
 
-(defun pending-resolve-stream (p chunk)
+(defun pending-stream-insert (p chunk)
   "Append CHUNK (a string) to P's placeholder region.
 The spinner / progress indicator stays visible.
 
@@ -1268,7 +1268,7 @@ advances with the insert because of its insertion-type.
 Streamed text gets the same read-only properties as the initial
 label (`read-only' t, `front-sticky' \\='(read-only),
 `rear-nonsticky' \\='(read-only)) so the user cannot edit it
-mid-stream.  `pending-finish-stream' strips these properties so the
+mid-stream.  `pending-stream-finish' strips these properties so the
 resolved text becomes editable.  The streamed text carries no
 `face' property — the library never faces text it inserts itself;
 the buffer's normal font-lock applies.  The overlay is grown via
@@ -1276,7 +1276,7 @@ the buffer's normal font-lock applies.  The overlay is grown via
 streamed text too.
 
 This does NOT finalize.  The caller must follow up with
-`pending-finish-stream', `pending-reject', or `pending-cancel'.
+`pending-stream-finish', `pending-reject', or `pending-cancel'.
 
 If P is already terminal, this is a no-op and a `:debug' warning is
 logged (the chunk is dropped).
@@ -1340,7 +1340,7 @@ CHUNK must be a string; an empty string is a no-op.  Signals
                             (marker-position (pending-end p)))))
           t))))))
 
-(defun pending-finish-stream (p)
+(defun pending-stream-finish (p)
   "Finalize a streamed placeholder.
 Transition P from `:streaming' to `:resolved'.  Lock the end marker
 by flipping its insertion-type back to nil, strip read-only
@@ -1357,7 +1357,7 @@ is logged."
    ((pending--terminal-status-p (pending-status p))
     (display-warning
      'pending
-     (format "ignoring finish-stream on already-terminal placeholder %s (status %s)"
+     (format "ignoring stream-finish on already-terminal placeholder %s (status %s)"
              (pending-id p) (pending-status p))
      :debug)
     nil)

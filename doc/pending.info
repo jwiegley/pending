@@ -204,7 +204,7 @@ terminal token are no-ops with a ‘:debug’ warning.
      directly from ‘:scheduled’ to ‘:streaming’ or to a terminal state.
 
 ‘:streaming’
-     At least one chunk has been delivered via ‘pending-resolve-stream’.
+     At least one chunk has been delivered via ‘pending-stream-insert’.
      The end marker's insertion-type is ‘t’, so subsequent chunks append
      at the end naturally.
 
@@ -508,7 +508,7 @@ bars, deadlines, and process attachment.
           (pending-update tok :percent 0.42)
           (pending-update tok :indicator :eta :eta 10.0)
 
- -- Function: pending-resolve-stream p chunk
+ -- Function: pending-stream-insert p chunk
      Append CHUNK (a string) to P's region.  The spinner / progress
      indicator stays visible.
 
@@ -525,16 +525,16 @@ bars, deadlines, and process attachment.
      so its own inserts do not retrigger the cancel-on-collapse hook.
 
      This does NOT finalize.  The caller must follow up with
-     ‘pending-finish-stream’, ‘pending-reject’, or ‘pending-cancel’.
+     ‘pending-stream-finish’, ‘pending-reject’, or ‘pending-cancel’.
 
      If P is already terminal, this is a no-op (debug warning); the
      chunk is dropped.  Signals ‘wrong-type-argument’ if CHUNK is not a
      string; an empty string is a no-op.
 
-          (pending-resolve-stream tok "Once upon a time, ")
-          (pending-resolve-stream tok "in a faraway land...")
+          (pending-stream-insert tok "Once upon a time, ")
+          (pending-stream-insert tok "in a faraway land...")
 
- -- Function: pending-finish-stream p
+ -- Function: pending-stream-finish p
      Finalize a streamed placeholder.  Transitions P from ‘:streaming’
      to ‘:resolved’.  Locks the end marker, strips read-only properties
      from the streamed region (so the resolved text becomes editable),
@@ -545,7 +545,7 @@ bars, deadlines, and process attachment.
      behaves like ‘(pending-finish P "")’.  If P is already terminal, a
      no-op with debug warning.
 
-          (pending-finish-stream tok)
+          (pending-stream-finish tok)
 
  -- Function: pending-reject p reason &optional replacement-text
      Mark P as failed with REASON and replace its region.  REASON should
@@ -678,10 +678,10 @@ commands, and URLs to taste.
           :position (pending-end p)
           :callback (lambda (chunk info)
                       (cond
-                       ((stringp chunk) (pending-resolve-stream p chunk))
+                       ((stringp chunk) (pending-stream-insert p chunk))
                        ((plist-get info :error)
                         (pending-reject p (plist-get info :error)))
-                       (t (pending-finish-stream p)))))
+                       (t (pending-stream-finish p)))))
          p))
 
 8.2 gptel -- non-streaming response
@@ -713,10 +713,10 @@ commands, and URLs to taste.
                      :buffer nil
                      :command (list shell-file-name "-c" cmd)
                      :filter (lambda (_proc out)
-                               (pending-resolve-stream p out))
+                               (pending-stream-insert p out))
                      :sentinel (lambda (_proc event)
                                  (if (string-prefix-p "finished" event)
-                                     (pending-finish-stream p)
+                                     (pending-stream-finish p)
                                    (pending-reject p (string-trim event)))))))
          (pending-attach-process p proc)
          (setf (pending-on-cancel p) (lambda (_) (delete-process proc)))
@@ -1050,8 +1050,8 @@ Progress bar   Single line of text in        Eighth-block Unicode bar
                ‘after-string’                (or ASCII fallback)
                                              
 Streaming      Message-passing via           First-class
-               ‘org-pending-send-update’     ‘pending-resolve-stream’ /
-                                             ‘-finish-stream’
+               ‘org-pending-send-update’     ‘pending-stream-insert’ /
+                                             ‘-stream-finish’
                                              
 Description    ‘*Region Lock*’ describe      Tabulated list (deferred
 UI             buffer                        describe-buffer)
@@ -1263,8 +1263,6 @@ Index
 * pending-face <1>:                      Customization.       (line  85)
 * pending-finish:                        Simple API.          (line  42)
 * pending-finish <1>:                    Simple API.          (line  43)
-* pending-finish-stream:                 Rich API.            (line 110)
-* pending-finish-stream <1>:             Rich API.            (line 111)
 * pending-fps:                           Customization.       (line   9)
 * pending-goto:                          Simple API.          (line  72)
 * pending-goto <1>:                      Simple API.          (line  73)
@@ -1295,13 +1293,15 @@ Index
 * pending-region-map <1>:                Interactive UI.      (line  44)
 * pending-reject:                        Rich API.            (line 123)
 * pending-reject <1>:                    Rich API.            (line 124)
-* pending-resolve-stream:                Rich API.            (line  84)
-* pending-resolve-stream <1>:            Rich API.            (line  85)
 * pending-spinner-face:                  Customization.       (line  90)
 * pending-spinner-face <1>:              Customization.       (line  91)
 * pending-spinner-styles:                Customization.       (line  25)
 * pending-status:                        Rich API.            (line 177)
 * pending-status <1>:                    Rich API.            (line 178)
+* pending-stream-finish:                 Rich API.            (line 110)
+* pending-stream-finish <1>:             Rich API.            (line 111)
+* pending-stream-insert:                 Rich API.            (line  84)
+* pending-stream-insert <1>:             Rich API.            (line  85)
 * pending-update:                        Rich API.            (line  72)
 * pending-update <1>:                    Rich API.            (line  73)
 * piecewise asymptote:                   Indicator modes.     (line  24)
@@ -1333,20 +1333,20 @@ Node: Introduction1942
 Node: Installation3855
 Node: Quick start4767
 Node: Concepts6068
-Node: Simple API11442
-Node: Rich API16029
-Node: Indicator modes24392
-Node: Integrations26096
-Node: Interactive UI30576
-Node: Mode-line lighter32373
-Node: Customization33370
-Node: Hooks and callbacks38147
-Node: Comparison40285
-Node: Caveats42623
-Node: Roadmap43969
-Node: Development44614
-Node: License46287
-Node: Index46607
+Node: Simple API11441
+Node: Rich API16028
+Node: Indicator modes24388
+Node: Integrations26092
+Node: Interactive UI30570
+Node: Mode-line lighter32367
+Node: Customization33364
+Node: Hooks and callbacks38141
+Node: Comparison40279
+Node: Caveats42616
+Node: Roadmap43962
+Node: Development44607
+Node: License46280
+Node: Index46600
 
 End Tag Table
 

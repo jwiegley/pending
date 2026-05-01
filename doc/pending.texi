@@ -236,7 +236,7 @@ state.
 
 @item :streaming
 At least one chunk has been delivered via
-@code{pending-resolve-stream}.  The end marker's insertion-type is
+@code{pending-stream-insert}.  The end marker's insertion-type is
 @code{t}, so subsequent chunks append at the end naturally.
 
 @item :resolved
@@ -605,8 +605,8 @@ terminal state.
 @end example
 @end deffn
 
-@deffn Function pending-resolve-stream p chunk
-@findex pending-resolve-stream
+@deffn Function pending-stream-insert p chunk
+@findex pending-stream-insert
 Append CHUNK (a string) to P's region.  The spinner / progress
 indicator stays visible.
 
@@ -624,7 +624,7 @@ library binds @code{inhibit-read-only} and
 the cancel-on-collapse hook.
 
 This does NOT finalize.  The caller must follow up with
-@code{pending-finish-stream}, @code{pending-reject}, or
+@code{pending-stream-finish}, @code{pending-reject}, or
 @code{pending-cancel}.
 
 If P is already terminal, this is a no-op (debug warning); the chunk
@@ -632,13 +632,13 @@ is dropped.  Signals @code{wrong-type-argument} if CHUNK is not a
 string; an empty string is a no-op.
 
 @example
-(pending-resolve-stream tok "Once upon a time, ")
-(pending-resolve-stream tok "in a faraway land@dots{}")
+(pending-stream-insert tok "Once upon a time, ")
+(pending-stream-insert tok "in a faraway land@dots{}")
 @end example
 @end deffn
 
-@deffn Function pending-finish-stream p
-@findex pending-finish-stream
+@deffn Function pending-stream-finish p
+@findex pending-stream-finish
 Finalize a streamed placeholder.  Transitions P from
 @code{:streaming} to @code{:resolved}.  Locks the end marker, strips
 read-only properties from the streamed region (so the resolved text
@@ -651,7 +651,7 @@ streamed), behaves like @code{(pending-finish P "")}.  If P is
 already terminal, a no-op with debug warning.
 
 @example
-(pending-finish-stream tok)
+(pending-stream-finish tok)
 @end example
 @end deffn
 
@@ -820,10 +820,10 @@ commands, and URLs to taste.
      :position (pending-end p)
      :callback (lambda (chunk info)
                  (cond
-                  ((stringp chunk) (pending-resolve-stream p chunk))
+                  ((stringp chunk) (pending-stream-insert p chunk))
                   ((plist-get info :error)
                    (pending-reject p (plist-get info :error)))
-                  (t (pending-finish-stream p)))))
+                  (t (pending-stream-finish p)))))
     p))
 @end example
 
@@ -858,10 +858,10 @@ commands, and URLs to taste.
                 :buffer nil
                 :command (list shell-file-name "-c" cmd)
                 :filter (lambda (_proc out)
-                          (pending-resolve-stream p out))
+                          (pending-stream-insert p out))
                 :sentinel (lambda (_proc event)
                             (if (string-prefix-p "finished" event)
-                                (pending-finish-stream p)
+                                (pending-stream-finish p)
                               (pending-reject p (string-trim event)))))))
     (pending-attach-process p proc)
     (setf (pending-on-cancel p) (lambda (_) (delete-process proc)))
@@ -1254,8 +1254,8 @@ different angle.
 
 @item Streaming
 @tab Message-passing via @code{org-pending-send-update}
-@tab First-class @code{pending-resolve-stream} /
-@code{-finish-stream}
+@tab First-class @code{pending-stream-insert} /
+@code{-stream-finish}
 
 @item Description UI
 @tab @code{*Region Lock*} describe buffer

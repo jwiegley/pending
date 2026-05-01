@@ -359,7 +359,7 @@ caller learns more about progress — switch from `:spinner` to
 (pending-update tok :indicator :eta :eta 10.0)
 ```
 
-### `pending-resolve-stream P CHUNK`
+### `pending-stream-insert P CHUNK`
 
 Append `CHUNK` (a string) to `P`'s region. The first chunk replaces
 the loading label and transitions to `:streaming`; subsequent chunks
@@ -371,11 +371,11 @@ The streamed text is read-only while streaming, but carries no
 uninterrupted.
 
 ```elisp
-(pending-resolve-stream tok "Once upon a time, ")
-(pending-resolve-stream tok "in a faraway land...")
+(pending-stream-insert tok "Once upon a time, ")
+(pending-stream-insert tok "in a faraway land...")
 ```
 
-### `pending-finish-stream P`
+### `pending-stream-finish P`
 
 Finalize a streamed placeholder: flip the end marker's
 insertion-type back to nil, strip read-only properties, remove the
@@ -383,7 +383,7 @@ overlay, fire `:on-resolve`. The buffer text is left as-is (it
 already holds the streamed content).
 
 ```elisp
-(pending-finish-stream tok)
+(pending-stream-finish tok)
 ```
 
 If `P` never received a chunk (status is `:scheduled` or
@@ -474,10 +474,10 @@ this one to never hit 100% until it actually finishes.
      :position (pending-end p)
      :callback (lambda (chunk info)
                  (cond
-                  ((stringp chunk) (pending-resolve-stream p chunk))
+                  ((stringp chunk) (pending-stream-insert p chunk))
                   ((plist-get info :error)
                    (pending-reject p (plist-get info :error)))
-                  (t (pending-finish-stream p)))))
+                  (t (pending-stream-finish p)))))
     p))
 ```
 
@@ -511,10 +511,10 @@ this one to never hit 100% until it actually finishes.
                 :buffer nil
                 :command (list shell-file-name "-c" cmd)
                 :filter (lambda (_proc out)
-                          (pending-resolve-stream p out))
+                          (pending-stream-insert p out))
                 :sentinel (lambda (_proc event)
                             (if (string-prefix-p "finished" event)
-                                (pending-finish-stream p)
+                                (pending-stream-finish p)
                               (pending-reject p (string-trim event)))))))
     (pending-attach-process p proc)
     (setf (pending-on-cancel p) (lambda (_) (delete-process proc)))
@@ -722,7 +722,7 @@ is a condensed version of `RESEARCH.md` §1.
 | State machine     | `:scheduled → :pending → :success/:failure`  | Adds `:running`, `:streaming`, `:cancelled`, `:expired`  |
 | Animation         | Static Unicode glyph                         | Animated spinner (10 fps, single global timer)           |
 | Progress bar      | Single line of text in `after-string`        | Eighth-block Unicode bar (or ASCII fallback)             |
-| Streaming         | Message-passing via `org-pending-send-update`| First-class `pending-resolve-stream` / `-finish-stream`  |
+| Streaming         | Message-passing via `org-pending-send-update`| First-class `pending-stream-insert` / `-stream-finish`   |
 | Description UI    | `*Region Lock*` describe buffer              | Tabulated list (`pending-list`) — describe deferred      |
 | Indirect buffers  | Read-only projection                         | Not yet — overlay+text-property scope is single-buffer   |
 | Kill-emacs query  | Built in (`kill-emacs-query-functions`)      | Same hook, gated by `pending-confirm-on-emacs-exit`      |

@@ -24,7 +24,7 @@
 ;; chunks, the `:streaming' transition on first chunk, mid-stream
 ;; cancel, stream-then-resolve replacement, the empty-chunk no-op,
 ;; read-only enforcement on streamed text, and the
-;; `pending-finish-stream' read-only strip and never-streamed
+;; `pending-stream-finish' read-only strip and never-streamed
 ;; fallback behaviour; Phase 7 covers process integration —
 ;; `pending-attach-process' wrapping a process sentinel so that
 ;; clean exits and failure exits both translate to the right
@@ -35,7 +35,7 @@
 ;; the placeholder (a critical correctness property for network
 ;; processes), and that a signalling pre-existing sentinel does
 ;; not block the wrapper's lifecycle handling; plus a defence-in-
-;; depth check that `pending-finish-stream' on a killed buffer is
+;; depth check that `pending-stream-finish' on a killed buffer is
 ;; safe (the kill-buffer-hook normally cancels first); Phase 8
 ;; covers the interactive UI — `pending-cancel-at-point' both for
 ;; the success path and the no-pending `user-error' branch,
@@ -773,10 +773,10 @@ than push the marker."
       (with-current-buffer buf
         (insert "Pre:")
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve-stream p "abc")
-          (pending-resolve-stream p "def")
-          (pending-resolve-stream p "ghi")
-          (pending-finish-stream p)
+          (pending-stream-insert p "abc")
+          (pending-stream-insert p "def")
+          (pending-stream-insert p "ghi")
+          (pending-stream-finish p)
           (should (eq (pending-status p) :resolved))
           (should (string-match-p "Pre:abcdefghi" (buffer-string))))))))
 
@@ -789,9 +789,9 @@ moment so subsequent inserts at its position advance the marker."
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
           (should (eq (pending-status p) :scheduled))
-          (pending-resolve-stream p "hi")
+          (pending-stream-insert p "hi")
           (should (eq (pending-status p) :streaming))
-          (pending-finish-stream p)
+          (pending-stream-finish p)
           (should (eq (pending-status p) :resolved)))))))
 
 (ert-deftest pending-test/stream-then-finish-replaces ()
@@ -804,7 +804,7 @@ chunks had streamed in."
       (with-current-buffer buf
         (insert "Pre:")
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve-stream p "streamed-content")
+          (pending-stream-insert p "streamed-content")
           (pending-finish p "FINAL")
           (should (eq (pending-status p) :resolved))
           (should (string-match-p "Pre:FINAL" (buffer-string)))
@@ -820,7 +820,7 @@ that `pending-cancel' invokes."
         (let* ((flag nil)
                (p (pending-make buf :label "X"
                                 :on-cancel (lambda (_) (setq flag t)))))
-          (pending-resolve-stream p "partial")
+          (pending-stream-insert p "partial")
           (pending-cancel p :user)
           (should (eq (pending-status p) :cancelled))
           (should flag)
@@ -835,9 +835,9 @@ because the empty-chunk early-return bypasses the state machine."
     (pending-test--with-buffer (buf "*p-empty*")
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve-stream p "")
+          (pending-stream-insert p "")
           (should (eq (pending-status p) :scheduled))
-          (pending-finish-stream p)
+          (pending-stream-finish p)
           (should (eq (pending-status p) :resolved)))))))
 
 (ert-deftest pending-test/streamed-text-is-read-only ()
@@ -848,32 +848,32 @@ so the user gets the standard `text-read-only' rejection."
     (pending-test--with-buffer (buf "*p-stream-readonly*")
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve-stream p "abc")
+          (pending-stream-insert p "abc")
           (goto-char (1+ (overlay-start (pending-region p))))
           (should-error (let ((inhibit-read-only nil)) (insert "EVIL"))
                         :type 'text-read-only))))))
 
-(ert-deftest pending-test/finish-stream-clears-read-only ()
-  "After `pending-finish-stream', the streamed text is freely editable.
+(ert-deftest pending-test/stream-finish-clears-read-only ()
+  "After `pending-stream-finish', the streamed text is freely editable.
 The finalize path calls `remove-text-properties' over the whole
 streamed region so `read-only', `front-sticky', and `rear-nonsticky'
 all come off."
   (pending-test--with-fresh-registry
-    (pending-test--with-buffer (buf "*p-finish-edit*")
+    (pending-test--with-buffer (buf "*p-stream-finish-edit*")
       (with-current-buffer buf
         (let* ((p (pending-make buf :label "X"))
                (start nil) (end nil))
-          (pending-resolve-stream p "abc")
+          (pending-stream-insert p "abc")
           (setq start (marker-position (pending-start p))
                 end   (marker-position (pending-end p)))
-          (pending-finish-stream p)
+          (pending-stream-finish p)
           (when (and start end)
             (goto-char (1+ start))
             (let ((inhibit-read-only nil))
               (insert "X"))
             (should (string-match-p "aXbc" (buffer-string)))))))))
 
-(ert-deftest pending-test/finish-stream-without-chunks ()
+(ert-deftest pending-test/stream-finish-without-chunks ()
   "Finish-stream on a never-streamed placeholder behaves like resolve.
 With no chunks ever streamed the call delegates to
 `(pending-finish p \"\")', so the buffer ends up with the
@@ -883,7 +883,7 @@ placeholder removed and replaced by the empty string."
       (with-current-buffer buf
         (insert "Before:")
         (let ((p (pending-make buf :label "X")))
-          (pending-finish-stream p)
+          (pending-stream-finish p)
           (should (eq (pending-status p) :resolved))
           (should (string-match-p "Before:" (buffer-string)))
           (should-not (string-match-p "X" (buffer-string))))))))
@@ -1044,30 +1044,30 @@ so the wrapper's lifecycle bookkeeping is not skipped."
 
 ;;; Phase 7 — buffer-dead defense in depth
 
-(ert-deftest pending-test/finish-stream-buffer-dead-still-resolves ()
-  "Killing the buffer mid-stream and then calling `pending-finish-stream'
+(ert-deftest pending-test/stream-finish-buffer-dead-still-resolves ()
+  "Killing the buffer mid-stream and then calling `pending-stream-finish'
 must still flip status (status will be :cancelled because
-kill-buffer-hook fires first; finish-stream sees the terminal
+kill-buffer-hook fires first; stream-finish sees the terminal
 state and bails).  Documents that the buffer-kill hook handles
-the dead-buffer case before `pending-finish-stream' ever sees
-it.  The defense-in-depth code in `pending-finish-stream' is
+the dead-buffer case before `pending-stream-finish' ever sees
+it.  The defense-in-depth code in `pending-stream-finish' is
 still valuable for correctness but is essentially unreachable in
 normal use."
   (pending-test--with-fresh-registry
-    (let* ((buf (generate-new-buffer "*p-finish-dead*"))
+    (let* ((buf (generate-new-buffer "*p-stream-finish-dead*"))
            (callback-ran nil)
            (p (with-current-buffer buf
                 (pending-make buf :label "X"
                               :on-resolve (lambda (_) (setq callback-ran t))))))
-      (with-current-buffer buf (pending-resolve-stream p "abc"))
+      (with-current-buffer buf (pending-stream-insert p "abc"))
       (kill-buffer buf)
       ;; By now, kill-buffer-hook should have run, cancelling the placeholder.
       ;; Status: :cancelled. Reason: :buffer-killed. The on-resolve callback
       ;; was fired by pending-cancel.
       (should (memq (pending-status p) '(:cancelled :resolved)))
       (should callback-ran)
-      ;; Calling finish-stream now is a no-op (placeholder is terminal).
-      (pending-finish-stream p))))
+      ;; Calling stream-finish now is a no-op (placeholder is terminal).
+      (pending-stream-finish p))))
 
 
 
@@ -1370,7 +1370,7 @@ but the underlying buffer text does NOT carry a face text property."
     (pending-test--with-buffer (buf "*p-stream-no-face*")
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve-stream p "abc")
+          (pending-stream-insert p "abc")
           (let ((pos (1+ (overlay-start (pending-ov p)))))
             (should-not (get-text-property pos 'face))))))))
 

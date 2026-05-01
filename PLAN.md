@@ -153,7 +153,7 @@ in 8 seconds.
 - [x] `pending--on-modify` cancels with `:region-deleted` when the
       overlay collapses to zero length.
 - [x] `inhibit-read-only` bound during `pending--swap-region` and
-      `pending-resolve-stream`.
+      `pending-stream-insert`.
 - [x] ERT marker-survival and read-only tests.
 
 **Exit**: marker-survival tests pass; the user can edit before/after
@@ -166,14 +166,14 @@ the placeholder freely but cannot edit it.
 
 ## Phase 6 — Streaming
 
-**Goal**: `pending-resolve-stream` and `pending-finish-stream`.
+**Goal**: `pending-stream-insert` and `pending-stream-finish`.
 
-- [x] `pending-resolve-stream` inserts at end marker (which has
+- [x] `pending-stream-insert` inserts at end marker (which has
       insertion-type t while streaming), transitions to
       `:streaming` on first chunk.
 - [x] Streamed text gets the same read-only properties as the
       initial label.
-- [x] `pending-finish-stream` flips end marker insertion-type to
+- [x] `pending-stream-finish` flips end marker insertion-type to
       nil, removes overlay decorations, transitions to
       `:resolved`.
 - [x] ERT tests for streaming append correctness, mid-stream

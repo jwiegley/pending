@@ -262,7 +262,7 @@ State diagram:
                       ▼                          │
                   :running ◄─┐                   │
                       │      │                   │
-              pending-resolve-stream             │
+              pending-stream-insert              │
                       │      │                   │
                       ▼      │                   │
                  :streaming ─┘                   │
@@ -320,8 +320,8 @@ upgrade to `(format "%s-%d" (random) (cl-incf pending--next-id))` or
 
 ### Ownership
 
-- The **caller** owns `pending-finish`, `pending-resolve-stream`,
-  `pending-finish-stream`, `pending-reject`, `pending-update`. These
+- The **caller** owns `pending-finish`, `pending-stream-insert`,
+  `pending-stream-finish`, `pending-reject`, `pending-update`. These
   are how the producer reports progress and finalizes.
 - The **library** owns the timer, overlay rendering, registry mutation,
   and edit-survival hooks.
@@ -438,10 +438,10 @@ unregisters, runs ON-RESOLVE callback."
   ...)
 ```
 
-### `pending-resolve-stream`
+### `pending-stream-insert`
 
 ```elisp
-(defun pending-resolve-stream (p chunk)
+(defun pending-stream-insert (p chunk)
   "Append CHUNK (a string) to P's placeholder region.
 Keeps the spinner / progress indicator visible and the placeholder
 read-only.  The end marker advances (insertion-type t).
@@ -450,7 +450,7 @@ Transitions P from `:running' (or `:scheduled') to `:streaming' on
 first call.  Subsequent calls remain in `:streaming'.
 
 This does NOT finalize.  Caller must finish with
-`pending-finish-stream' or `pending-reject' or `pending-cancel'.
+`pending-stream-finish' or `pending-reject' or `pending-cancel'.
 
 If P is already terminal, this is a no-op + warning (the chunk is
 dropped on the floor)."
@@ -469,12 +469,12 @@ Streaming semantics:
   read-only properties as the original placeholder so the user cannot
   edit it mid-stream.
 - The spinner glyph stays in `before-string` (or wherever §4 places
-  it) until `pending-finish-stream`.
+  it) until `pending-stream-finish`.
 
-### `pending-finish-stream`
+### `pending-stream-finish`
 
 ```elisp
-(defun pending-finish-stream (p)
+(defun pending-stream-finish (p)
   "Finalize a streamed placeholder.
 Transitions P from `:streaming' to `:resolved'.  Removes spinner,
 locks end marker (`set-marker-insertion-type ... nil'), strips the
@@ -606,7 +606,7 @@ placeholders, they call `pending-make` N times.
 - **User cancels mid-stream**: `pending-cancel` runs `on-cancel`
   (caller kills curl), then replaces whatever has been streamed so far
   with the cancelled glyph. The streamed-so-far text is lost; if the
-  caller wants to keep it, they should call `pending-finish-stream`
+  caller wants to keep it, they should call `pending-stream-finish`
   before cancel-time, but at that point they've raced.
 
 ## 4. Visual design
@@ -859,7 +859,7 @@ still see a bar of bitmaps in the fringe.
   exactly what we want.
 - **end marker**: insertion-type `t` *while running/streaming*.
   Insertions at its position go *to its left* — i.e. the marker
-  advances to remain at the end. This lets `pending-resolve-stream`
+  advances to remain at the end. This lets `pending-stream-insert`
   call `(goto-char (pending-end p))` and `(insert chunk)` and have
   the marker still point at the new end. Mirrors gptel's pattern at
   `gptel.el:1794`.
@@ -967,7 +967,7 @@ deletions (option 2's read-only blocking is redundant with option 1),
 not for blocking edits.
 
 For streaming inserts within the region, we bind `inhibit-read-only`
-to `t` inside `pending-resolve-stream`. The user cannot insert (text
+to `t` inside `pending-stream-insert`. The user cannot insert (text
 is read-only) but we can.
 
 ### Atomic resolution
@@ -1131,13 +1131,13 @@ Cancelled in `pending--unregister`:
      :callback (lambda (chunk info)
                  (pcase chunk
                    ((pred stringp)
-                    (pending-resolve-stream p chunk))
+                    (pending-stream-insert p chunk))
                    (`(reasoning . ,_) nil)  ; ignore
                    (_  (if (plist-get info :error)
                            (pending-reject p (plist-get info :error))
-                         (pending-finish-stream p))))))
+                         (pending-stream-finish p))))))
     ;; Note: with :stream t and :callback, gptel routes each chunk to the
-    ;; callback; the callback inserts via pending-resolve-stream.  The
+    ;; callback; the callback inserts via pending-stream-insert.  The
     ;; :position keyword is just where gptel's tracking-marker starts.
     p))
 ```
@@ -1154,10 +1154,10 @@ Cancelled in `pending--unregister`:
                 :buffer nil
                 :command (list shell-file-name "-c" cmd)
                 :filter (lambda (_proc out)
-                          (pending-resolve-stream p out))
+                          (pending-stream-insert p out))
                 :sentinel (lambda (_proc event)
                             (if (string-prefix-p "finished" event)
-                                (pending-finish-stream p)
+                                (pending-stream-finish p)
                               (pending-reject p (string-trim event)))))))
     (pending-attach-process p proc)
     (setf (pending-on-cancel p) (lambda (_) (delete-process proc)))
@@ -1214,7 +1214,7 @@ State transitions:
 - `pending-test/running-to-streaming`: create, stream chunk; status is
   `:streaming` after.
 - `pending-test/streaming-to-resolved-via-finish`: stream two chunks,
-  finish-stream; status is `:resolved`, region text is concatenation.
+  stream-finish; status is `:resolved`, region text is concatenation.
 - `pending-test/no-double-resolve`: resolve, then resolve again; second
   call returns nil; warning is captured; status remains `:resolved`.
 - `pending-test/no-double-reject-after-resolve`: same but mixing
@@ -1518,15 +1518,15 @@ Mimic: gptel uses `inhibit-read-only` bindings — see
 
 ### Phase 6 — Streaming (~80 LOC)
 
-Goal: `pending-resolve-stream` and `pending-finish-stream`.
+Goal: `pending-stream-insert` and `pending-stream-finish`.
 
 Files: `pending.el`.
 
 Deliverables:
 
-- `pending-resolve-stream` inserts at `end` marker, transitions to
+- `pending-stream-insert` inserts at `end` marker, transitions to
   `:streaming`, leaves indicator visible.
-- `pending-finish-stream` flips end marker insertion-type to nil,
+- `pending-stream-finish` flips end marker insertion-type to nil,
   removes overlay decorations, transitions to `:resolved`.
 - Streamed text is read-only (same properties as initial label).
 

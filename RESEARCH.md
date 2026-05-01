@@ -197,8 +197,8 @@ genuinely useful UX feature we should consider for v1 or v2 of
 - Animated spinner (10 fps, single global timer).
 - Determinate (`:percent`) and time-driven (`:eta`) progress bars
   with eighth-block rendering.
-- First-class streaming via `pending-resolve-stream` /
-  `pending-finish-stream` modeled on gptel's tracking-marker
+- First-class streaming via `pending-stream-insert` /
+  `pending-stream-finish` modeled on gptel's tracking-marker
   pattern.
 - Distinct `:cancelled` and `:expired` terminal states (vs collapsing
   both into `:failure`).

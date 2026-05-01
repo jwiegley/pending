@@ -77,8 +77,8 @@ There are two public surfaces and they MUST stay aligned:
   `pending-cancel TOKEN`, `pending-goto TOKEN`, `pending-list`,
   `pending-alist`.
 - **Rich keyword API** (for streaming, animation, deadlines, processes):
-  `pending-make BUFFER &key ...` plus `pending-resolve-stream`,
-  `pending-finish-stream`, `pending-update`, `pending-attach-process`,
+  `pending-make BUFFER &key ...` plus `pending-stream-insert`,
+  `pending-stream-finish`, `pending-update`, `pending-attach-process`,
   `pending-reject`.
 
 Both produce the same `pending` `cl-defstruct` token. New features should
@@ -88,7 +88,7 @@ API is implemented as thin wrappers that delegate to `pending-make`.
 ### Single mutation path for terminal transitions
 
 `pending--resolve-internal` is the **only** function that flips a token from
-non-terminal to terminal status. Resolve, reject, cancel, finish-stream,
+non-terminal to terminal status. Resolve, reject, cancel, stream-finish,
 process-sentinel, deadline-timer all converge here. Two guards prevent
 re-entrancy: a terminal-status check at the top, and a per-token
 `in-resolve` boolean slot that is set eagerly in `pending-cancel` *before*
@@ -137,15 +137,15 @@ the animation phase is stable across timer parks/resumes (gptel-style; see
 
 ### Marker discipline for streaming
 
-End marker insertion-type defaults to `nil`. `pending-resolve-stream` flips
+End marker insertion-type defaults to `nil`. `pending-stream-insert` flips
 it to `t` on the first chunk so subsequent inserts at the marker advance it
-naturally; `pending-finish-stream` flips it back. The first chunk also
+naturally; `pending-stream-finish` flips it back. The first chunk also
 deletes the placeholder label content so the streamed text replaces it
 rather than appending after. This deviates from the literal "append" prose
 in early DESIGN.md drafts but matches the LLM streaming UX (label
 "Calling Claude" → response chunks). The streaming tests pin this contract.
 
-When growing the overlay during streaming, `pending-resolve-stream` calls
+When growing the overlay during streaming, `pending-stream-insert` calls
 `move-overlay` so its face/decorations/modification-hooks track the new
 range — without that call, mid-stream deletes of streamed text wouldn't
 auto-cancel.
