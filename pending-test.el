@@ -1515,12 +1515,23 @@ but the underlying buffer text does NOT carry a face text property."
 
 ;;; v0.2 — auto-refresh of *Pending* list
 
+(defun pending-test--drain-list-refresh ()
+  "Drain a queued debounced `*Pending*' list refresh, if any.
+The auto-refresh helper schedules an idle timer; ERT batch mode
+does not go idle on its own, so we run the queued refresh
+synchronously via `pending--list-refresh-flush' to mirror the
+effect of an idle moment passing in interactive use."
+  (pending--list-refresh-flush))
+
 (ert-deftest pending-test/list-auto-refreshes-on-register ()
   "Creating a placeholder while *Pending* is open updates the list.
 With `pending-list-auto-refresh' on (the default), `pending-make'
-firing through `pending--register' triggers a re-populate of the
-live `*Pending*' buffer so newly registered placeholders appear
-without the user pressing `g'."
+firing through `pending--register' schedules a debounced refresh of
+the live `*Pending*' buffer so newly registered placeholders appear
+without the user pressing `g'.
+
+The refresh is async (idle-timer based) so the test must wait for
+the queued refresh to fire before checking row count."
   (pending-test--with-fresh-registry
     (unwind-protect
         (progn
@@ -1530,6 +1541,7 @@ without the user pressing `g'."
               (pending-make buf :label "A")
               (insert " ")
               (pending-make buf :label "B"))
+            (pending-test--drain-list-refresh)
             (with-current-buffer "*Pending*"
               (should (= 2 (length tabulated-list-entries))))))
       (when (get-buffer "*Pending*") (kill-buffer "*Pending*")))))
@@ -1537,8 +1549,9 @@ without the user pressing `g'."
 (ert-deftest pending-test/list-auto-refreshes-on-resolve ()
   "Resolving a placeholder while *Pending* is open updates the list.
 The terminal transition path goes through `pending--resolve-internal'
-which calls `pending--unregister' which now refreshes the live list,
-so a resolved row drops out of the view immediately."
+which calls `pending--unregister' which schedules a debounced refresh
+so a resolved row drops out of the view shortly after.  The refresh
+is async (idle-timer based); we drain the queue between mutations."
   (pending-test--with-fresh-registry
     (unwind-protect
         (pending-test--with-buffer (buf "*p-auto-2*")
@@ -1547,9 +1560,11 @@ so a resolved row drops out of the view immediately."
               (insert " ")
               (let ((p2 (pending-make buf :label "B")))
                 (pending-list)
+                (pending-test--drain-list-refresh)
                 (with-current-buffer "*Pending*"
                   (should (= 2 (length tabulated-list-entries))))
                 (pending-finish p1 "done")
+                (pending-test--drain-list-refresh)
                 (with-current-buffer "*Pending*"
                   (should (= 1 (length tabulated-list-entries))))
                 ;; Cleanup

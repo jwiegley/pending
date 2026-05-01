@@ -404,21 +404,21 @@ Updated by `pending--register' and `pending--unregister'.")
 Kept in sync with `pending--registry' so buffer-scoped queries do not
 have to scan the global table.")
 
+(defvar pending--list-refresh-pending nil
+  "Non-nil while a debounced `*Pending*' list-refresh is queued.
+Set when `pending--list-refresh-if-live' schedules an idle timer to
+do the actual repaint; cleared inside the timer callback before
+the repaint runs.  A second `pending--list-refresh-if-live' call
+arriving while the flag is set is coalesced — back-to-back
+registry mutations only repaint once.")
 
-;;; Internal helpers
-
-(defun pending--list-refresh-if-live ()
-  "Refresh the `*Pending*' buffer if it is live and in `pending-list-mode'.
-Used to keep the list view in lockstep with the registry across
-mutating paths — `pending--register', `pending--unregister', and
-`pending--resolve-internal'.  No-op when the buffer is missing,
-dead, in a different mode, or `pending-list-auto-refresh' is nil.
-
-Repopulates `tabulated-list-entries' from the current registry and
-re-prints the table.  Attempts to keep cursor on the same row by
-remembering the result of `line-number-at-pos' before the print and
-restoring it afterwards (best-effort: rows may have been removed)."
-  (when pending-list-auto-refresh
+(defun pending--list-refresh-flush ()
+  "Run any pending `*Pending*' debounced refresh synchronously now.
+Useful for tests and for callers that need the list view fully
+in sync with the registry before reading `tabulated-list-entries'.
+No-op when no refresh is queued."
+  (when pending--list-refresh-pending
+    (setq pending--list-refresh-pending nil)
     (let ((buf (get-buffer "*Pending*")))
       (when (and buf (buffer-live-p buf))
         (with-current-buffer buf
@@ -427,12 +427,53 @@ restoring it afterwards (best-effort: rows may have been removed)."
                   (point-line (line-number-at-pos)))
               (pending--list-populate)
               (tabulated-list-print t)
-              ;; Best-effort cursor restoration: rows may have been
-              ;; added/removed, so this lands the user on the row at
-              ;; the same visual offset.  If that row no longer
-              ;; exists, point lands at end-of-buffer.
               (goto-char (point-min))
               (forward-line (1- point-line)))))))))
+
+
+;;; Internal helpers
+
+(defun pending--list-refresh-if-live ()
+  "Schedule a refresh of the `*Pending*' buffer if it is live and visible.
+Used to keep the list view in lockstep with the registry across
+mutating paths — `pending--register' and `pending--unregister'
+(which is invoked transitively from `pending--resolve-internal' and
+`pending-stream-finish').  No-op when the buffer is missing, dead,
+in a different mode, off-screen, or when
+`pending-list-auto-refresh' is nil.
+
+The repaint runs asynchronously through a one-shot 0.05s idle
+timer so back-to-back mutations (e.g. resolving twenty placeholders
+in a tight loop) coalesce into a single tabulated-list-print.  The
+visibility gate skips the work entirely when no window shows
+`*Pending*' — the user can press \\`g' on demand to refresh a
+hidden buffer.
+
+The timer body re-validates the buffer and mode at fire time
+because the user could have killed the buffer or switched modes
+during the idle window."
+  (when (and pending-list-auto-refresh
+             (not pending--list-refresh-pending)
+             (let ((buf (get-buffer "*Pending*")))
+               (and buf
+                    (buffer-live-p buf)
+                    (get-buffer-window buf 'visible))))
+    (setq pending--list-refresh-pending t)
+    (run-with-idle-timer
+     0.05 nil
+     (lambda ()
+       (setq pending--list-refresh-pending nil)
+       (let ((buf (get-buffer "*Pending*")))
+         (when (and buf (buffer-live-p buf))
+           (with-current-buffer buf
+             (when (derived-mode-p 'pending-list-mode)
+               (let ((inhibit-message t)
+                     (point-line (line-number-at-pos)))
+                 (pending--list-populate)
+                 (tabulated-list-print t)
+                 ;; Best-effort cursor restoration.
+                 (goto-char (point-min))
+                 (forward-line (1- point-line)))))))))))
 
 (defun pending--terminal-status-p (status)
   "Return non-nil if STATUS is a terminal lifecycle keyword.
