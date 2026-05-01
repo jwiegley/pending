@@ -293,8 +293,12 @@ The library distinguishes two visual treatments:
 
 @table @strong
 @item Region highlight
-The body of the placeholder uses the @code{pending-highlight} face so
-the user can see @emph{where} the asynchronous content will land.
+When the overlay covers existing buffer text (adopt mode
+@code{pending-overlay BEG END STR} with @code{BEG < END}), the
+overlay carries @code{pending-highlight} as its @code{face} property
+so the user can see @emph{which} characters the asynchronous change
+will rewrite.  In insert mode and zero-width adopt mode the overlay
+has no face --- there is no pre-existing region to highlight.
 
 @item Lighter
 A small bold badge (face @code{pending-lighter}) attached to the
@@ -305,6 +309,14 @@ that draws the eye.
 The simple API uses a static lighter (@code{:lighter} indicator).
 The rich API can substitute an animated spinner, a determinate bar,
 or an ETA bar in place of the static lighter.
+
+The library NEVER applies a @code{face} text property to text it
+inserts itself: labels, streamed chunks, and resolution / rejection
+/ cancellation replacement text all land in the buffer as plain
+text, so the surrounding font-lock and major-mode faces apply
+normally.  Only the overlay (in adopt mode with a non-empty range)
+and the overlay's @code{before-string} lighter /
+@code{after-string} progress bar are faced.
 
 @section Read-only protection
 @cindex read-only
@@ -382,10 +394,14 @@ Two call shapes are supported.
 
 @strong{Constructor:} @code{(pending-overlay BEG END STR)}.  Mark the
 region @code{[BEG, END]} in the current buffer as pending an
-asynchronous change.  Highlight the region with
-@code{pending-highlight} face and show STR as a lighter badge at BEG
-using @code{pending-lighter} face.  If BEG equals END, no region is
-highlighted; only the lighter shows.  Returns a TOKEN (a
+asynchronous change.  When @code{BEG < END}, the overlay covers
+existing buffer text and carries @code{pending-highlight} as its
+@code{face} property so the user can see which characters the
+asynchronous change will rewrite (the underlying buffer text is
+untouched --- only the overlay carries a face).  STR shows as a
+lighter badge at BEG via the overlay's @code{before-string}, faced
+with @code{pending-lighter}.  If BEG equals END, the overlay carries
+no face; only the lighter shows.  Returns a TOKEN (a
 @code{pending} struct) usable with @code{pending-resolve},
 @code{pending-cancel}, and @code{pending-goto}.
 
@@ -437,7 +453,9 @@ Cancel P, optionally with REASON (default @code{:cancelled-by-user}).
 Calls P's @code{:on-cancel} callback @emph{first}, so the caller can
 abort underlying work (e.g. kill a process).  Then transitions P to
 @code{:cancelled} and replaces the region with a small cancelled
-glyph (@samp{@U{2717} REASON}) faced with @code{pending-cancelled-face}.
+glyph (@samp{@U{2717} REASON}).  The inserted glyph is plain text
+--- the library never adds a @code{face} property to text it inserts
+itself; surrounding font-lock applies normally.
 
 The @code{:on-cancel} callback is wrapped in @code{condition-case};
 a buggy callback (or one that signals @code{quit}) does not break
@@ -544,7 +562,9 @@ It is an error to supply only one of START or END.
 @code{:timed-out}.
 
 @item @code{:face}
-@tab Override @code{pending-face} for the placeholder body.
+@tab Override @code{pending-face} for the OVERLAY's @code{face}
+property in adopt mode (BEG < END only).  Inserted text is never
+faced by the library.
 
 @item @code{:spinner-style}
 @tab Key into @code{pending-spinner-styles}.
@@ -602,7 +622,9 @@ to @code{:streaming}.  Subsequent chunks append at the end marker,
 which advances with the insert because of its insertion-type.
 
 Streamed text gets the same read-only properties as the initial
-label.  The library binds @code{inhibit-read-only} and
+label, but no @code{face} property: the library never faces text
+it inserts itself, so the buffer's normal font-lock applies.  The
+library binds @code{inhibit-read-only} and
 @code{inhibit-modification-hooks} so its own inserts do not retrigger
 the cancel-on-collapse hook.
 
@@ -642,8 +664,9 @@ already terminal, a no-op with debug warning.
 @findex pending-reject
 Mark P as failed with REASON and replace its region.  REASON should
 be a string or a keyword/symbol describing the failure.
-REPLACEMENT-TEXT defaults to a glyph plus the reason rendered with
-@code{pending-error-face}.
+REPLACEMENT-TEXT defaults to a glyph plus the reason.  The inserted
+text is plain --- the library never adds a @code{face} property to
+text it inserts itself; surrounding font-lock applies normally.
 
 Side effects mirror @code{pending-resolve} (removes overlay, clears
 markers, unregisters, cancels timer, runs @code{:on-resolve}).
@@ -1070,11 +1093,21 @@ the exit is not blocked.
 @section Faces
 @cindex faces
 
+The library never adds a @code{face} text property to text it
+inserts itself.  Faces are applied only to overlay properties ---
+the overlay's @code{face} (when adopting an existing region with
+@code{BEG < END}), the overlay's @code{before-string} lighter, and
+the overlay's @code{after-string} progress bar.  This means the
+surrounding buffer's font-lock is never disturbed by the
+placeholder library.
+
 @deffn Face pending-highlight
 @findex pending-highlight
-Background of the highlighted region of a pending overlay
-(@code{BEG..END}).  Applied to the placeholder body so the user can
-see where the asynchronously-arriving content will land.
+The overlay @code{face} for adopt-mode placeholders that cover
+existing buffer text (@code{BEG < END}).  In insert mode and
+zero-width adopt mode the overlay carries no face.  The library
+never applies this (or any) face as a text property to text it
+inserts itself.
 @end deffn
 
 @deffn Face pending-lighter
@@ -1087,9 +1120,10 @@ buffer.
 
 @deffn Face pending-face
 @findex pending-face
-Compatibility alias for @code{pending-highlight}.  Older code paths
-reference @code{pending-face} for the placeholder body; new code
-should prefer @code{pending-highlight}.
+Default value of @code{pending-make}'s @code{:face} keyword.
+Inherits from @code{pending-highlight}.  Used as the overlay's
+@code{face} property only when the overlay covers existing buffer
+text (adopt mode with a non-empty range).
 @end deffn
 
 @deffn Face pending-spinner-face
@@ -1106,12 +1140,16 @@ alignment under variable-pitch buffer faces.
 
 @deffn Face pending-error-face
 @findex pending-error-face
-Replacement text for rejected placeholders.
+Retained for backward compatibility and customization.  As of
+v0.1.0 the library does not face inserted text --- @code{pending-reject}
+inserts plain buffer text and surrounding font-lock applies.
 @end deffn
 
 @deffn Face pending-cancelled-face
 @findex pending-cancelled-face
-Replacement text for cancelled placeholders.
+Retained for backward compatibility and customization.  As of
+v0.1.0 the library does not face inserted text --- @code{pending-cancel}
+inserts plain buffer text and surrounding font-lock applies.
 @end deffn
 
 

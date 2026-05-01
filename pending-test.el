@@ -1321,6 +1321,62 @@ the demo buffer so leftover timers cannot fire after the test ends."
            (should (string-match-p "static" bs))))))))
 
 
+;;; Phase 11 — face policy: never face inserted text
+
+(ert-deftest pending-test/inserted-label-has-no-face ()
+  "`pending-make' insert mode: the inserted label text has no `face' property."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-no-face*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "WORK")))
+         (let ((face (get-text-property (overlay-start (pending-ov p)) 'face)))
+           (should-not face))
+         (let ((overlay-face (overlay-get (pending-ov p) 'face)))
+           (should-not overlay-face)))))))
+
+(ert-deftest pending-test/overlay-region-has-overlay-face ()
+  "`pending-overlay' adopt mode (non-empty region): overlay HAS a face,
+but the underlying buffer text does NOT carry a face text property."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-overlay-face*")
+     (with-current-buffer buf
+       (insert "Before-MID-After")
+       (let* ((tok (pending-overlay 8 11 "rewriting"))
+              (ov  (pending-ov tok)))
+         (should (eq (overlay-get ov 'face) 'pending-highlight))
+         ;; Underlying buffer text at position 8 has no face property.
+         (should-not (get-text-property 8 'face)))))))
+
+(ert-deftest pending-test/zero-width-overlay-has-no-overlay-face ()
+  "`pending-insert' (zero-width) does NOT set a face on the overlay."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-insert-no-face*")
+     (with-current-buffer buf
+       (insert "Hello")
+       (let* ((tok (pending-insert 3 "calling"))
+              (ov  (pending-ov tok)))
+         (should-not (overlay-get ov 'face)))))))
+
+(ert-deftest pending-test/resolved-text-has-no-face ()
+  "After `pending-resolve', the inserted resolution text has no `face' property."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-resolved-no-face*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve p "DONE")
+         (should-not (get-text-property (point-min) 'face)))))))
+
+(ert-deftest pending-test/streamed-text-has-no-face ()
+  "Streamed chunks land in the buffer without a `face' property."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-stream-no-face*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve-stream p "abc")
+         (let ((pos (1+ (overlay-start (pending-ov p)))))
+           (should-not (get-text-property pos 'face))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

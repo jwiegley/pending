@@ -217,8 +217,12 @@ placeholder is still in flight when Emacs is being killed."
      :background "#e8f0fa" :foreground "#1f4a78" :extend t)
     (t :inherit shadow))
   "Face for the highlighted region of a pending overlay (BEG..END).
-Applied to the placeholder body so the user can see where the
-asynchronously-arriving content will land."
+Applied as the overlay's `face' property only when the overlay
+covers existing buffer text — adopt mode with `BEG' < `END'.  In
+insert mode and zero-width adopt mode (`pending-insert' / overlays
+where `BEG' equals `END') the overlay carries no face, so the
+inserted label receives no background.  The library never adds a
+`face' property to text it inserts itself."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -236,8 +240,11 @@ in the buffer."
 (defface pending-face
   '((t :inherit pending-highlight))
   "Compatibility alias for `pending-highlight'.
-Older code paths reference `pending-face' for the placeholder body;
-new code should prefer `pending-highlight'."
+Used as the default value of `pending-make''s `:face' keyword.  The
+library applies it as the overlay's `face' property only when the
+overlay covers existing buffer text (adopt mode with a non-empty
+range).  Inserted text — labels, streamed chunks, and resolution
+text — is never faced by `pending'."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -258,13 +265,19 @@ alignment under variable-pitch buffer faces."
 
 (defface pending-error-face
   '((t :inherit error :weight bold))
-  "Face for rejected placeholders' replacement text."
+  "Face previously applied to rejected placeholders' replacement text.
+Retained for backward compatibility and customization.  As of
+v0.1.0 the library does not face inserted text — `pending-reject'
+inserts plain buffer text and surrounding font-lock applies."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
 (defface pending-cancelled-face
   '((t :inherit shadow :slant italic))
-  "Face for cancelled placeholders' replacement text."
+  "Face previously applied to cancelled placeholders' replacement text.
+Retained for backward compatibility and customization.  As of
+v0.1.0 the library does not face inserted text — `pending-cancel'
+inserts plain buffer text and surrounding font-lock applies."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
@@ -378,12 +391,17 @@ result of this removal."
   (when (zerop (hash-table-count pending--registry))
     (pending--park-timer)))
 
-(defun pending--swap-region (p new-text face)
-  "Atomically replace P's region with NEW-TEXT propertized by FACE.
+(defun pending--swap-region (p new-text)
+  "Atomically replace P's region with NEW-TEXT.
 The replacement is wrapped in an `atomic-change-group' so undo sees
 exactly one step.  `inhibit-read-only' and `inhibit-modification-hooks'
 are bound around the swap so neither this library's own read-only
 enforcement nor its modification hooks fight the operation.
+
+NEW-TEXT is inserted as plain buffer text without any `face' property:
+the placeholder library never adds a face to text it inserts itself.
+Highlighting only ever appears as the overlay's `face' property when
+the overlay covers EXISTING buffer text (adopt mode with BEG < END).
 
 The end marker is left pointing at the position immediately after the
 inserted text."
@@ -398,10 +416,10 @@ inserted text."
             (when (and start end)
               (delete-region start end)
               (goto-char start)
-              (insert (propertize (or new-text "") 'face face))
+              (insert (or new-text ""))
               (set-marker (pending-end p) (point)))))))))
 
-(defun pending--resolve-internal (p new-status reason new-text face
+(defun pending--resolve-internal (p new-status reason new-text
                                     &optional run-on-resolve)
   "Flip P from a non-terminal state to terminal NEW-STATUS with REASON.
 This is the single mutation path for terminal transitions; it
@@ -411,8 +429,8 @@ Steps:
   1. Bail out early if `pending--in-resolve' is already set on P
      (re-entrant guard) or if P is already in a terminal state.
   2. Set P's status, REASON-derived reason slot, and resolved-at.
-  3. Replace the placeholder region with NEW-TEXT propertized by FACE
-     via `pending--swap-region'.
+  3. Replace the placeholder region with NEW-TEXT (plain text, no
+     face) via `pending--swap-region'.
   4. Unregister P from both registries (also cancels P's deadline
      timer if any).
   5. Delete P's overlay and clear its markers.
@@ -446,7 +464,7 @@ resolve was suppressed."
                      (overlay-buffer (pending-ov p)))
             (overlay-put (pending-ov p) 'before-string nil)
             (overlay-put (pending-ov p) 'after-string nil))
-          (pending--swap-region p new-text face)
+          (pending--swap-region p new-text)
           (pending--unregister p)
           (let ((ov (pending-ov p)))
             (when (overlayp ov)
@@ -847,8 +865,11 @@ LABEL is a short string shown inside the placeholder, default
 
 INDICATOR selects the visual; `:spinner' (default), `:percent', or
 `:eta'.  PERCENT and ETA prime the determinate / ETA modes; FACE
-overrides `pending-face'; SPINNER-STYLE selects an entry from
-`pending-spinner-styles'.
+overrides `pending-face' for the OVERLAY's `face' property — used
+only when the overlay covers existing buffer text (adopt mode with
+BEG < END); insert and zero-width adopt overlays carry no face.
+The library never faces text it inserts itself.  SPINNER-STYLE
+selects an entry from `pending-spinner-styles'.
 
 DEADLINE, if non-nil, is wall-clock seconds before the placeholder is
 auto-rejected with reason `:timed-out'.  A one-shot timer is
@@ -896,6 +917,7 @@ position falls outside BUFFER's bounds."
          (resolved-spinner (or spinner-style pending-default-spinner-style))
          (resolved-face (or face 'pending-face))
          (inhibit-read-only (or inhibit-read-only pending-allow-read-only))
+         (adopt-mode-p (and start end))
          start-marker
          end-marker)
     (with-current-buffer buffer
@@ -913,8 +935,11 @@ position falls outside BUFFER's bounds."
           ;; after the placeholder explicitly allowed.  The library's
           ;; own swap is wrapped in `inhibit-read-only' so the
           ;; placeholder remains mutable from the inside.
+          ;; No `face' property: the library never faces text it
+          ;; inserts itself.  Highlighting only ever appears as the
+          ;; overlay's `face' property when the overlay covers
+          ;; existing buffer text (adopt mode with BEG < END).
           (insert (propertize resolved-label
-                              'face resolved-face
                               'read-only t
                               'front-sticky '(read-only)
                               'rear-nonsticky '(read-only)))
@@ -968,7 +993,18 @@ position falls outside BUFFER's bounds."
                :in-resolve nil
                :last-frame nil)))
       (overlay-put ov 'pending p)
-      (overlay-put ov 'face resolved-face)
+      ;; Only apply the overlay face when the overlay covers existing
+      ;; buffer text — adopt mode with a non-empty range.  In insert
+      ;; mode the overlay covers freshly-inserted label text (which
+      ;; the library policy says must NOT be faced), and in zero-width
+      ;; adopt mode there is no region to highlight; in both cases
+      ;; the overlay's `face' is left unset.  See `pending--swap-region':
+      ;; the library never faces text it inserts itself either.
+      (when adopt-mode-p
+        (let ((sp (marker-position start-marker))
+              (ep (marker-position end-marker)))
+          (when (and sp ep (< sp ep))
+            (overlay-put ov 'face resolved-face))))
       (overlay-put ov 'priority 100)
       (overlay-put ov 'evaporate nil)
       ;; Modification hooks fire on user edits inside the region or at
@@ -1129,19 +1165,26 @@ Transition P to `:resolved'.  Return t on success, or nil if P was
 already in a terminal state (in which case a `:debug' warning is
 logged).
 
+TEXT is inserted as plain buffer text with no `face' property — the
+library never faces text it inserts itself.
+
 The replacement happens inside an `atomic-change-group' so undo sees
 one step, with `inhibit-read-only' and `inhibit-modification-hooks'
 bound during the swap.  Side effects: removes the overlay, clears
 markers, unregisters P, cancels its deadline timer, and runs the
 `on-resolve' callback once (errors there are caught and warned)."
-  (pending--resolve-internal p :resolved nil text 'pending-face t))
+  (pending--resolve-internal p :resolved nil text t))
 
 (defun pending-reject (p reason &optional replacement-text)
   "Mark P as failed with REASON and replace its region.
 REASON should be a string or a keyword/symbol describing the failure.
-REPLACEMENT-TEXT defaults to a glyph plus the reason rendered with
-`pending-error-face'.  Transition P to `:rejected' and return t on
-success, or nil if P was already terminal.
+REPLACEMENT-TEXT defaults to a glyph plus the reason.  Transition P
+to `:rejected' and return t on success, or nil if P was already
+terminal.
+
+The inserted text carries no `face' property — the library never
+faces text it inserts itself; surrounding font-lock and major-mode
+faces apply normally.
 
 Side effects mirror `pending-resolve' (removes overlay, clears
 markers, unregisters, cancels timer, runs `on-resolve')."
@@ -1150,15 +1193,17 @@ markers, unregisters, cancels timer, runs `on-resolve')."
                           (if reason
                               (pending--format-reason reason)
                             "Failed")))))
-    (pending--resolve-internal p :rejected reason text
-                               'pending-error-face t)))
+    (pending--resolve-internal p :rejected reason text t)))
 
 (defun pending-cancel (p &optional reason)
   "Cancel P, optionally with REASON (default `:cancelled-by-user').
 Call P's `on-cancel' callback FIRST, so the caller can abort its
 underlying work (e.g. kill a process).  Then transition P to
-`:cancelled' and replace its region with a small cancelled glyph
-faced `pending-cancelled-face'.
+`:cancelled' and replace its region with a small cancelled glyph.
+
+The inserted glyph carries no `face' property — the library never
+faces text it inserts itself; surrounding font-lock and major-mode
+faces apply normally.
 
 The on-cancel callback is wrapped in `condition-case' so a buggy
 callback does not break the cancel path.  This function is safe to
@@ -1211,7 +1256,7 @@ Return t on success, or nil if P was already terminal."
       (pending--resolve-internal
        p :cancelled effective-reason
        (format "✗ %s" (pending--format-reason effective-reason))
-       'pending-cancelled-face t)))))
+       t)))))
 
 
 ;;; Public API: streaming
@@ -1230,9 +1275,9 @@ Streamed text gets the same read-only properties as the initial
 label (`read-only' t, `front-sticky' \\='(read-only),
 `rear-nonsticky' \\='(read-only)) so the user cannot edit it
 mid-stream.  `pending-finish-stream' strips these properties so the
-resolved text becomes editable.  The streamed text is faced with
-P's face slot (or `pending-face' if unset), keeping the same visual
-treatment as the initial label.  The overlay is grown via
+resolved text becomes editable.  The streamed text carries no
+`face' property — the library never faces text it inserts itself;
+the buffer's normal font-lock applies.  The overlay is grown via
 `move-overlay' so its decorations and modification-hooks cover the
 streamed text too.
 
@@ -1279,14 +1324,13 @@ CHUNK must be a string; an empty string is a no-op.  Signals
           ;; Insert at the end marker.  With insertion-type t the
           ;; marker advances past the inserted text on its own.
           ;; `inhibit-modification-hooks' prevents `pending--on-modify'
-          ;; from firing on this library-internal insert.
+          ;; from firing on this library-internal insert.  No `face'
+          ;; property: the library never faces text it inserts itself.
           (let ((inhibit-read-only t)
-                (inhibit-modification-hooks t)
-                (face (or (pending-face p) 'pending-face)))
+                (inhibit-modification-hooks t))
             (save-excursion
               (goto-char (pending-end p))
               (insert (propertize chunk
-                                  'face face
                                   'read-only t
                                   'front-sticky '(read-only)
                                   'rear-nonsticky '(read-only)))))
@@ -1345,8 +1389,9 @@ is logged."
             (when (and start end)
               ;; Strip read-only and stickiness from the streamed
               ;; region so the resolved text becomes ordinary
-              ;; editable text.  We keep the face so the streamed
-              ;; content remains visually distinct.
+              ;; editable text.  Streamed chunks carry no `face'
+              ;; property either, so there is nothing visual to
+              ;; preserve here.
               (remove-text-properties
                start end
                '(read-only nil front-sticky nil rear-nonsticky nil))))

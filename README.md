@@ -139,16 +139,27 @@ and the mode-line lighter.
 
 The library distinguishes two visual treatments for placeholders:
 
-- **Region highlight** — the body of the placeholder uses the
-  `pending-highlight` face so the user can see *where* the
-  asynchronous content will land.
+- **Region highlight** — when the overlay covers existing buffer text
+  (adopt mode `pending-overlay BEG END STR` with `BEG < END`), the
+  overlay carries `pending-highlight` as its `face` property so the
+  user can see *which* characters the asynchronous change will
+  rewrite. In insert mode and zero-width adopt mode the overlay has
+  no face — there is no pre-existing region to highlight.
 - **Lighter** — a small bold badge (face `pending-lighter`) attached
-  to the overlay's `before-string`. This is the prominent
-  visual marker that draws the eye.
+  to the overlay's `before-string`. This is the prominent visual
+  marker that draws the eye.
 
 The simple API uses a static lighter (`:lighter` indicator). The rich
 API can substitute an animated spinner, a determinate bar, or an ETA
 bar in place of the static lighter.
+
+The library NEVER applies a `face` text property to text it inserts
+itself: labels, streamed chunks, and resolution / rejection /
+cancellation replacement text all land in the buffer as plain text,
+so the surrounding font-lock and major-mode faces apply normally.
+Only the overlay (in adopt mode with a non-empty range) and the
+overlay's `before-string` lighter / `after-string` progress bar are
+faced.
 
 ### Read-only protection
 
@@ -195,12 +206,17 @@ cannot strand state:
 ```
 
 Mark the region `[BEG, END]` in the current buffer as pending an
-asynchronous change. Highlight the region with `pending-highlight`
-and show `STR` as a lighter badge at `BEG`. Returns a token.
+asynchronous change. When `BEG < END`, the overlay covers existing
+buffer text and is faced with `pending-highlight` so the user can see
+which characters the asynchronous change will rewrite (the underlying
+buffer text is untouched — only the overlay carries a face). `STR`
+shows as a lighter badge at `BEG` via the overlay's `before-string`.
+Returns a token.
 
 If `BEG` equals `END`, the region is empty and only the lighter shows
-— equivalent to `pending-insert`. The 1-arg form returns the token's
-overlay (back-compat with the auto-generated accessor name).
+— equivalent to `pending-insert`. In that case the overlay carries no
+face. The 1-arg form returns the token's overlay (back-compat with
+the auto-generated accessor name).
 
 ```elisp
 (let ((tok (pending-overlay (region-beginning) (region-end)
@@ -237,8 +253,9 @@ terminal state.
 
 Cancel `TOKEN`. Calls the placeholder's `:on-cancel` callback first
 (so the caller can abort underlying work — e.g. kill a process), then
-replaces the region with a small cancelled glyph (`✗ REASON`) faced
-with `pending-cancelled-face`. Default `REASON` is
+replaces the region with a small cancelled glyph (`✗ REASON`). The
+inserted glyph is plain text — no `face` property is applied; the
+surrounding font-lock applies normally. Default `REASON` is
 `:cancelled-by-user`.
 
 ```elisp
@@ -302,7 +319,7 @@ Keyword reference:
 | `:percent`        | Initial fraction in `[0.0, 1.0]` for `:percent` mode.                                    |
 | `:eta`            | Estimated total seconds for `:eta` mode (asymptotes to ~95% at this time).               |
 | `:deadline`       | Wall-clock seconds until auto-rejection with reason `:timed-out`.                        |
-| `:face`           | Override `pending-face` for the placeholder body.                                        |
+| `:face`           | Override `pending-face` for the OVERLAY's `face` property in adopt mode (BEG < END only). Inserted text is never faced. |
 | `:spinner-style`  | Key into `pending-spinner-styles`.                                                       |
 | `:on-cancel`      | Function `(P)` called *before* status flips to `:cancelled`. Abort underlying work here. |
 | `:on-resolve`     | Function `(P)` called once on transition to any terminal state.                          |
@@ -341,8 +358,9 @@ the loading label and transitions to `:streaming`; subsequent chunks
 append at the end marker (which has insertion-type `t` while
 streaming, so it advances with the insert).
 
-The streamed text is also read-only. Animation continues uninterrupted
-during streaming.
+The streamed text is read-only while streaming, but carries no `face`
+property — the buffer's normal font-lock applies. Animation continues
+uninterrupted during streaming.
 
 ```elisp
 (pending-resolve-stream tok "Once upon a time, ")
@@ -366,7 +384,8 @@ this is equivalent to `(pending-resolve P "")`.
 ### `pending-reject P REASON &optional REPLACEMENT-TEXT`
 
 Mark `P` as failed. `REASON` is a string or symbol. `REPLACEMENT-TEXT`
-defaults to `"✗ REASON"` faced with `pending-error-face`.
+defaults to `"✗ REASON"`. The inserted text is plain — no `face`
+property is applied; surrounding font-lock applies normally.
 
 ```elisp
 (pending-reject tok "API rate limit exceeded")
@@ -614,15 +633,22 @@ Add your own via:
 
 ## Faces
 
+The library never adds a `face` text property to text it inserts
+itself. Faces are applied only to overlay properties — the overlay's
+`face` (when adopting an existing region), the overlay's
+`before-string` lighter, and the overlay's `after-string` progress
+bar. This means the surrounding buffer's font-lock is never disturbed
+by the placeholder library.
+
 | Face                       | Role                                                          |
 |----------------------------|---------------------------------------------------------------|
-| `pending-highlight`        | Background of the highlighted region (`BEG..END`).            |
-| `pending-lighter`          | Static badge (`pending-overlay`/`pending-insert`). White on red. |
-| `pending-face`             | Compatibility alias for `pending-highlight`.                  |
+| `pending-highlight`        | Overlay `face` for adopt-mode placeholders covering existing buffer text (`BEG < END`). |
+| `pending-lighter`          | Lighter badge in the overlay's `before-string`. White on red. |
+| `pending-face`             | Default value of `pending-make`'s `:face` keyword; inherits from `pending-highlight`. |
 | `pending-spinner-face`     | Spinner glyph in the `before-string`.                         |
 | `pending-progress-face`    | Bar and ETA text in the `after-string`.                       |
-| `pending-error-face`       | Replacement text for rejected placeholders.                   |
-| `pending-cancelled-face`   | Replacement text for cancelled placeholders.                  |
+| `pending-error-face`       | Retained for backward compatibility (no longer applied to inserted text). |
+| `pending-cancelled-face`   | Retained for backward compatibility (no longer applied to inserted text). |
 
 ## Hooks and lifecycle callbacks
 
