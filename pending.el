@@ -133,17 +133,6 @@ block elements don't render."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
-(defcustom pending-bar-family nil
-  "Font family used for the progress bar segment, or nil.
-When non-nil, the bar text is rendered in this family so that
-proportional buffer faces do not break alignment.  When nil, the bar
-inherits the surrounding face — variable-pitch users may then see
-misalignment."
-  :type '(choice (const :tag "Inherit buffer face" nil)
-                 (string :tag "Font family"))
-  :group 'pending
-  :package-version '(pending . "0.1.0"))
-
 (defcustom pending-allow-read-only nil
   "If non-nil, allow placement of placeholders in read-only buffers.
 By default `pending-make' refuses to operate on a buffer where
@@ -314,36 +303,44 @@ text — is never faced by `pending'."
 
 (defface pending-spinner-face
   '((((class color) (background dark)) :foreground "#ffd866")
-    (((class color) (background light)) :foreground "#b6862c"))
-  "Face for the before-string spinner glyph."
+    (((class color) (background light)) :foreground "#b6862c")
+    (t :inherit warning))
+  "Face for the before-string spinner glyph.
+The tty fallback inherits `warning' so monochrome terminals get a
+visible cue.  On graphical frames, the colour entries above
+override that fallback."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
 (defface pending-progress-face
   '((t :inherit pending-face))
   "Face for the after-string progress bar and ETA text.
-Apply `pending-bar-family' on top of this face when set, to keep
-alignment under variable-pitch buffer faces."
+For variable-pitch alignment, customise this face directly with a
+`:family' attribute."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
 (defface pending-error-face
   '((t :inherit error :weight bold))
   "Face previously applied to rejected placeholders' replacement text.
-Retained for backward compatibility and customization.  As of
-v0.1.0 the library does not face inserted text — `pending-reject'
-inserts plain buffer text and surrounding font-lock applies."
+Retained for backward compatibility and customization.  The
+library does not face inserted text — `pending-reject' inserts
+plain buffer text and surrounding font-lock applies.  Marked
+obsolete in v0.2.0 via the `obsolete-face' symbol property."
   :group 'pending
   :package-version '(pending . "0.1.0"))
+(put 'pending-error-face 'obsolete-face "0.2.0")
 
 (defface pending-cancelled-face
   '((t :inherit shadow :slant italic))
   "Face previously applied to cancelled placeholders' replacement text.
-Retained for backward compatibility and customization.  As of
-v0.1.0 the library does not face inserted text — `pending-cancel'
-inserts plain buffer text and surrounding font-lock applies."
+Retained for backward compatibility and customization.  The
+library does not face inserted text — `pending-cancel' inserts
+plain buffer text and surrounding font-lock applies.  Marked
+obsolete in v0.2.0 via the `obsolete-face' symbol property."
   :group 'pending
   :package-version '(pending . "0.1.0"))
+(put 'pending-cancelled-face 'obsolete-face "0.2.0")
 
 
 ;;; Errors

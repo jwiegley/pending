@@ -974,13 +974,6 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      default) or ‘ascii’ (ASCII fallback for terminals where Unicode
      block elements don't render).
 
- -- User Option: pending-bar-family
-     Font family used for the progress bar segment, or nil.  When
-     non-nil, the bar text is rendered in this family so that
-     proportional buffer faces do not break alignment.  When nil, the
-     bar inherits the surrounding face -- variable-pitch users may then
-     see misalignment.
-
  -- User Option: pending-allow-read-only
      If non-nil, allow placement of placeholders in read-only buffers.
      By default ‘pending-make’ refuses to operate on a buffer where
@@ -1094,19 +1087,21 @@ placeholder library.
      The before-string spinner glyph.
 
  -- Face: pending-progress-face
-     The after-string progress bar and ETA text.  Apply
-     ‘pending-bar-family’ on top of this face when set, to keep
-     alignment under variable-pitch buffer faces.
+     The after-string progress bar and ETA text.  For variable-pitch
+     alignment, customise this face directly with a ‘:family’ attribute
+     pointing at a fixed-pitch family.
 
  -- Face: pending-error-face
-     Retained for backward compatibility and customization.  As of
-     v0.1.0 the library does not face inserted text -- ‘pending-reject’
-     inserts plain buffer text and surrounding font-lock applies.
+     Retained for backward compatibility and customization.  Marked
+     obsolete in v0.2.0; the library does not face inserted text --
+     ‘pending-reject’ inserts plain buffer text and surrounding
+     font-lock applies.
 
  -- Face: pending-cancelled-face
-     Retained for backward compatibility and customization.  As of
-     v0.1.0 the library does not face inserted text -- ‘pending-cancel’
-     inserts plain buffer text and surrounding font-lock applies.
+     Retained for backward compatibility and customization.  Marked
+     obsolete in v0.2.0; the library does not face inserted text --
+     ‘pending-cancel’ inserts plain buffer text and surrounding
+     font-lock applies.
 
 
 File: pending.info,  Node: Hooks and callbacks,  Next: Comparison,  Prev: Customization,  Up: Top
@@ -1230,8 +1225,8 @@ File: pending.info,  Node: Caveats,  Next: Roadmap,  Prev: Comparison,  Up: Top
 
    • *Variable-pitch alignment.*  The ‘:percent’ and ‘:eta’ bars assume
      a monospaced cell width.  Under variable-pitch buffer faces, the
-     bar may look ragged.  Set ‘pending-bar-family’ to a fixed-pitch
-     family to compensate.
+     bar may look ragged.  Customise ‘pending-progress-face’ with a
+     ‘:family’ attribute pointing at a fixed-pitch family to compensate.
 
    • *Overlay scope.*  A placeholder's overlay lives in one buffer.  As
      of v0.2 the read-only text properties applied in adopt mode (gated
@@ -1370,7 +1365,7 @@ Index
 * edit-survival:                         Concepts.            (line 101)
 * errors:                                Hooks and callbacks. (line  58)
 * ETA:                                   Indicator modes.     (line   6)
-* faces:                                 Customization.       (line 127)
+* faces:                                 Customization.       (line 120)
 * global-pending-lighter-mode:           Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <1>:       Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <2>:       Mode-line lighter.   (line   7)
@@ -1399,23 +1394,22 @@ Index
 * pending-alist:                         Concepts.            (line  54)
 * pending-alist <1>:                     Simple API.          (line  86)
 * pending-alist <2>:                     Simple API.          (line  87)
-* pending-allow-read-only:               Customization.       (line  42)
+* pending-allow-read-only:               Customization.       (line  35)
 * pending-as-promise:                    Promise adapter.     (line  12)
 * pending-as-promise <1>:                Promise adapter.     (line  13)
 * pending-at:                            Rich API.            (line 183)
 * pending-at <1>:                        Rich API.            (line 184)
 * pending-attach-process:                Rich API.            (line 139)
 * pending-attach-process <1>:            Rich API.            (line 140)
-* pending-bar-family:                    Customization.       (line  35)
 * pending-bar-style:                     Customization.       (line  30)
 * pending-bar-width:                     Customization.       (line  16)
 * pending-cancel:                        Simple API.          (line  56)
 * pending-cancel <1>:                    Simple API.          (line  57)
 * pending-cancel-at-point:               Simple API.          (line  95)
 * pending-cancel-at-point <1>:           Simple API.          (line  96)
-* pending-cancelled-face:                Customization.       (line 164)
-* pending-cancelled-face <1>:            Customization.       (line 165)
-* pending-confirm-on-emacs-exit:         Customization.       (line  56)
+* pending-cancelled-face:                Customization.       (line 158)
+* pending-cancelled-face <1>:            Customization.       (line 159)
+* pending-confirm-on-emacs-exit:         Customization.       (line  49)
 * pending-default-spinner-style:         Customization.       (line  20)
 * pending-demo:                          Interactive UI.      (line  77)
 * pending-demo <1>:                      Interactive UI.      (line  78)
@@ -1426,28 +1420,28 @@ Index
 * pending-describe-jump:                 Interactive UI.      (line  57)
 * pending-describe-refresh:              Interactive UI.      (line  55)
 * pending-error:                         Hooks and callbacks. (line  58)
-* pending-error-face:                    Customization.       (line 159)
-* pending-error-face <1>:                Customization.       (line 160)
-* pending-face:                          Customization.       (line 145)
-* pending-face <1>:                      Customization.       (line 146)
+* pending-error-face:                    Customization.       (line 152)
+* pending-error-face <1>:                Customization.       (line 153)
+* pending-face:                          Customization.       (line 138)
+* pending-face <1>:                      Customization.       (line 139)
 * pending-finish:                        Simple API.          (line  42)
 * pending-finish <1>:                    Simple API.          (line  43)
 * pending-fps:                           Customization.       (line   9)
-* pending-fringe-bitmap:                 Customization.       (line  81)
+* pending-fringe-bitmap:                 Customization.       (line  74)
 * pending-goto:                          Simple API.          (line  72)
 * pending-goto <1>:                      Simple API.          (line  73)
-* pending-highlight:                     Customization.       (line 134)
-* pending-highlight <1>:                 Customization.       (line 135)
+* pending-highlight:                     Customization.       (line 127)
+* pending-highlight <1>:                 Customization.       (line 128)
 * pending-insert:                        Simple API.          (line  34)
 * pending-insert <1>:                    Simple API.          (line  35)
-* pending-label-max-width:               Customization.       (line  50)
-* pending-lighter:                       Customization.       (line 140)
-* pending-lighter <1>:                   Customization.       (line 141)
+* pending-label-max-width:               Customization.       (line  43)
+* pending-lighter:                       Customization.       (line 133)
+* pending-lighter <1>:                   Customization.       (line 134)
 * pending-list:                          Simple API.          (line  82)
 * pending-list <1>:                      Simple API.          (line  83)
 * pending-list-active:                   Rich API.            (line 188)
 * pending-list-active <1>:               Rich API.            (line 189)
-* pending-list-auto-refresh:             Customization.       (line  63)
+* pending-list-auto-refresh:             Customization.       (line  56)
 * pending-list-cancel:                   Interactive UI.      (line  29)
 * pending-list-describe:                 Interactive UI.      (line  31)
 * pending-list-jump:                     Interactive UI.      (line  27)
@@ -1457,18 +1451,18 @@ Index
 * pending-make <2>:                      Rich API.            (line   6)
 * pending-mode-line-string:              Mode-line lighter.   (line  20)
 * pending-mode-line-string <1>:          Mode-line lighter.   (line  21)
-* pending-progress-face:                 Customization.       (line 154)
-* pending-progress-face <1>:             Customization.       (line 155)
-* pending-protect-adopted-region:        Customization.       (line 103)
-* pending-pulse-on-resolve:              Customization.       (line  72)
+* pending-progress-face:                 Customization.       (line 147)
+* pending-progress-face <1>:             Customization.       (line 148)
+* pending-protect-adopted-region:        Customization.       (line  96)
+* pending-pulse-on-resolve:              Customization.       (line  65)
 * pending-region:                        Simple API.          (line  10)
 * pending-region <1>:                    Simple API.          (line  11)
 * pending-region-map:                    Interactive UI.      (line  70)
 * pending-region-map <1>:                Interactive UI.      (line  71)
 * pending-reject:                        Rich API.            (line 126)
 * pending-reject <1>:                    Rich API.            (line 127)
-* pending-spinner-face:                  Customization.       (line 151)
-* pending-spinner-face <1>:              Customization.       (line 152)
+* pending-spinner-face:                  Customization.       (line 144)
+* pending-spinner-face <1>:              Customization.       (line 145)
 * pending-spinner-styles:                Customization.       (line  25)
 * pending-status:                        Rich API.            (line 180)
 * pending-status <1>:                    Rich API.            (line 181)
@@ -1476,8 +1470,8 @@ Index
 * pending-stream-finish <1>:             Rich API.            (line 114)
 * pending-stream-insert:                 Rich API.            (line  87)
 * pending-stream-insert <1>:             Rich API.            (line  88)
-* pending-svg-spinner-enable:            Customization.       (line  91)
-* pending-svg-spinner-size:              Customization.       (line  98)
+* pending-svg-spinner-enable:            Customization.       (line  84)
+* pending-svg-spinner-size:              Customization.       (line  91)
 * pending-update:                        Rich API.            (line  75)
 * pending-update <1>:                    Rich API.            (line  76)
 * piecewise asymptote:                   Indicator modes.     (line  24)
@@ -1519,13 +1513,13 @@ Node: Promise adapter31982
 Node: Interactive UI33709
 Node: Mode-line lighter36602
 Node: Customization37599
-Node: Hooks and callbacks45883
-Node: Comparison48021
-Node: Caveats50494
-Node: Roadmap51670
-Node: Development52831
-Node: License54525
-Node: Index54845
+Node: Hooks and callbacks45601
+Node: Comparison47739
+Node: Caveats50212
+Node: Roadmap51437
+Node: Development52598
+Node: License54292
+Node: Index54612
 
 End Tag Table
 

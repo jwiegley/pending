@@ -669,7 +669,6 @@ Bindings inside the description buffer:
 | `pending-default-spinner-style`   | `'dots-1`    | Default key into `pending-spinner-styles`.                              |
 | `pending-spinner-styles`          | (see source) | Alist mapping style symbols to vectors of frame strings.                |
 | `pending-bar-style`               | `'eighths`   | Bar character set: `eighths` (Unicode) or `ascii`.                      |
-| `pending-bar-family`              | `nil`        | Font family for the bar (avoids variable-pitch misalignment).           |
 | `pending-allow-read-only`         | `nil`        | When non-nil, placeholders may be placed in read-only buffers.          |
 | `pending-label-max-width`         | `60`         | Maximum visible label width; longer labels are truncated.               |
 | `pending-confirm-on-emacs-exit`   | `nil`        | When non-nil, prompt before exit while placeholders are active.         |
@@ -816,8 +815,9 @@ out of the box, prefer this one.
   hit any actual problem in practice, but the cost is real.
 - **Variable-pitch alignment.** The `:percent` and `:eta` bars
   assume a monospaced cell width. Under variable-pitch buffer
-  faces, the bar may look ragged. Set `pending-bar-family` to a
-  fixed-pitch family to compensate.
+  faces, the bar may look ragged. Customise `pending-progress-face`
+  with a `:family` attribute pointing at a fixed-pitch family to
+  compensate.
 - **Overlay scope.** A placeholder's overlay lives in one buffer.
   v0.2 projects the read-only text properties into indirect
   buffers (gated on `pending-protect-adopted-region`), but the

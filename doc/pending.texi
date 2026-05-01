@@ -1167,13 +1167,6 @@ default) or @code{ascii} (ASCII fallback for terminals where Unicode
 block elements don't render).
 @end defopt
 
-@defopt pending-bar-family
-Font family used for the progress bar segment, or nil.  When non-nil,
-the bar text is rendered in this family so that proportional buffer
-faces do not break alignment.  When nil, the bar inherits the
-surrounding face --- variable-pitch users may then see misalignment.
-@end defopt
-
 @defopt pending-allow-read-only
 If non-nil, allow placement of placeholders in read-only buffers.
 By default @code{pending-make} refuses to operate on a buffer where
@@ -1313,23 +1306,25 @@ The before-string spinner glyph.
 
 @deffn Face pending-progress-face
 @findex pending-progress-face
-The after-string progress bar and ETA text.  Apply
-@code{pending-bar-family} on top of this face when set, to keep
-alignment under variable-pitch buffer faces.
+The after-string progress bar and ETA text.  For variable-pitch
+alignment, customise this face directly with a @code{:family}
+attribute pointing at a fixed-pitch family.
 @end deffn
 
 @deffn Face pending-error-face
 @findex pending-error-face
-Retained for backward compatibility and customization.  As of
-v0.1.0 the library does not face inserted text --- @code{pending-reject}
-inserts plain buffer text and surrounding font-lock applies.
+Retained for backward compatibility and customization.  Marked
+obsolete in v0.2.0; the library does not face inserted text ---
+@code{pending-reject} inserts plain buffer text and surrounding
+font-lock applies.
 @end deffn
 
 @deffn Face pending-cancelled-face
 @findex pending-cancelled-face
-Retained for backward compatibility and customization.  As of
-v0.1.0 the library does not face inserted text --- @code{pending-cancel}
-inserts plain buffer text and surrounding font-lock applies.
+Retained for backward compatibility and customization.  Marked
+obsolete in v0.2.0; the library does not face inserted text ---
+@code{pending-cancel} inserts plain buffer text and surrounding
+font-lock applies.
 @end deffn
 
 
@@ -1473,8 +1468,9 @@ some buffer operations.  Keep concurrent counts modest.
 
 @item @strong{Variable-pitch alignment.}  The @code{:percent} and
 @code{:eta} bars assume a monospaced cell width.  Under
-variable-pitch buffer faces, the bar may look ragged.  Set
-@code{pending-bar-family} to a fixed-pitch family to compensate.
+variable-pitch buffer faces, the bar may look ragged.  Customise
+@code{pending-progress-face} with a @code{:family} attribute
+pointing at a fixed-pitch family to compensate.
 
 @item @strong{Overlay scope.}  A placeholder's overlay lives in
 one buffer.  As of v0.2 the read-only text properties applied in
