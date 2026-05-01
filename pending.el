@@ -684,27 +684,37 @@ Dispatches on `(pending-indicator p)':
               is a piecewise-asymptotic progress bar derived from time
               elapsed vs `(pending-eta p)' followed by the estimated
               remaining seconds.
+  `:lighter' — static badge mode: `before-string' is the placeholder's
+              label propertized with `pending-lighter'.  No animation,
+              no after-string.  Used by `pending-overlay' and
+              `pending-insert' for visual badge placeholders.
 
 The spinner glyph debounces via `(pending-last-frame p)' so we only
 re-propertize the `before-string' when the frame index has actually
 moved.  The `after-string' is rebuilt every tick — rendering 10
 short bar strings per second is microsecond-scale and not worth
-caching at this stage.  No-op if the overlay has been deleted."
+caching at this stage.  No-op if the overlay has been deleted.
+
+In `:lighter' mode the spinner-glyph block is skipped entirely so
+no animation cost is paid; the badge is rendered once below."
   (let* ((ov (pending-overlay p))
          (indicator (or (pending-indicator p) :spinner)))
     (when (and (overlayp ov) (overlay-buffer ov))
-      ;; Spinner glyph — same code path in every indicator mode.
-      (let* ((frames (pending--get-frames
-                      (or (pending-spinner-style p)
-                          pending-default-spinner-style)))
-             (frame (pending--frame-index p frames)))
-        (unless (eql frame (pending-last-frame p))
-          (let ((glyph (aref frames frame)))
-            (overlay-put
-             ov 'before-string
-             (propertize (concat glyph " ") 'face 'pending-spinner-face)))
-          (setf (pending-last-frame p) frame)))
-      ;; After-string — depends on indicator mode.
+      ;; Spinner glyph — same code path in every indicator mode except
+      ;; `:lighter', which uses a static badge in `before-string' below
+      ;; and must not have its frame index advanced.
+      (unless (eq indicator :lighter)
+        (let* ((frames (pending--get-frames
+                        (or (pending-spinner-style p)
+                            pending-default-spinner-style)))
+               (frame (pending--frame-index p frames)))
+          (unless (eql frame (pending-last-frame p))
+            (let ((glyph (aref frames frame)))
+              (overlay-put
+               ov 'before-string
+               (propertize (concat glyph " ") 'face 'pending-spinner-face)))
+            (setf (pending-last-frame p) frame))))
+      ;; Mode-specific decoration.
       (pcase indicator
         (:spinner
          (overlay-put ov 'after-string nil))
@@ -724,7 +734,12 @@ caching at this stage.  No-op if the overlay has been deleted."
                 (remaining-secs (max 1 (round (- eta (- now start)))))
                 (txt   (format " %s ~%ds" bar remaining-secs)))
            (overlay-put ov 'after-string
-                        (propertize txt 'face 'pending-progress-face))))))))
+                        (propertize txt 'face 'pending-progress-face))))
+        (:lighter
+         (overlay-put ov 'before-string
+                      (propertize (or (pending-label p) "")
+                                  'face 'pending-lighter))
+         (overlay-put ov 'after-string nil))))))
 
 (defun pending--ensure-timer ()
   "Start the global animation timer if it is not running.
