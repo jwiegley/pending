@@ -8,3 +8,5 @@
 /.pending/
 /doc/pending.html
 /result
+/result-*
+/.lefthook-local.yml

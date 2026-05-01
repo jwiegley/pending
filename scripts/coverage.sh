@@ -35,7 +35,7 @@ if [ -f coverage.lcov ]; then
     echo "coverage: no DA records in coverage.lcov" >&2
     exit 1
   fi
-  PCT=$(( COVERED * 100 / TOTAL ))
+  PCT=$((COVERED * 100 / TOTAL))
   echo "coverage: $PCT% ($COVERED/$TOTAL lines)"
   if [ "$PCT" -lt "$BASELINE" ]; then
     echo "coverage: REGRESSION ($PCT% < baseline $BASELINE%)" >&2
@@ -43,7 +43,7 @@ if [ -f coverage.lcov ]; then
   fi
   # Update baseline if improved.
   if [ "$PCT" -gt "$BASELINE" ]; then
-    echo "$PCT" > "$BASELINE_FILE"
+    echo "$PCT" >"$BASELINE_FILE"
     echo "coverage: baseline raised to $PCT%"
   fi
 else

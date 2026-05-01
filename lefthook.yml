@@ -1,0 +1,54 @@
+pre-commit:
+  parallel: true
+  commands:
+    byte-compile:
+      glob: "*.el"
+      run: load-env-emacs30MacPort eask compile
+
+    tests:
+      glob: "*.el"
+      run: load-env-emacs30MacPort eask test ert pending-test.el
+
+    lint:
+      glob: "*.el"
+      run: make lint
+
+    format-check:
+      glob: "*.el"
+      run: make format-check
+
+    checkdoc:
+      glob: "*.el"
+      run: |
+        load-env-emacs30MacPort emacs --batch \
+          --eval '(progn (find-file "pending.el") (checkdoc-current-buffer t) (princ "DONE"))'
+        load-env-emacs30MacPort emacs --batch \
+          --eval '(progn (find-file "pending-test.el") (checkdoc-current-buffer t) (princ "DONE"))'
+
+    docs-build:
+      glob: "doc/*.texi"
+      run: make docs
+
+    coverage:
+      glob: "*.el"
+      run: make coverage
+
+    profile:
+      glob: "*.el"
+      run: make profile
+
+    nix-check:
+      glob: "{*.nix,flake.lock}"
+      run: nix flake check --no-warn-dirty 2>&1
+
+    nix-build-byte-compile:
+      glob: "*.{el,nix}"
+      run: nix build .#checks.aarch64-darwin.byte-compile --no-warn-dirty
+
+    shellcheck:
+      glob: "scripts/*.sh"
+      run: shellcheck {staged_files}
+
+    shfmt:
+      glob: "scripts/*.sh"
+      run: shfmt -i 2 -d {staged_files}
