@@ -256,8 +256,12 @@ mode-line lighter.
 The library distinguishes two visual treatments:
 
 *Region highlight*
-     The body of the placeholder uses the ‘pending-highlight’ face so
-     the user can see _where_ the asynchronous content will land.
+     When the overlay covers existing buffer text (adopt mode
+     ‘pending-overlay BEG END STR’ with ‘BEG < END’), the overlay
+     carries ‘pending-highlight’ as its ‘face’ property so the user can
+     see _which_ characters the asynchronous change will rewrite.  In
+     insert mode and zero-width adopt mode the overlay has no face --
+     there is no pre-existing region to highlight.
 
 *Lighter*
      A small bold badge (face ‘pending-lighter’) attached to the
@@ -267,6 +271,13 @@ The library distinguishes two visual treatments:
    The simple API uses a static lighter (‘:lighter’ indicator).  The
 rich API can substitute an animated spinner, a determinate bar, or an
 ETA bar in place of the static lighter.
+
+   The library NEVER applies a ‘face’ text property to text it inserts
+itself: labels, streamed chunks, and resolution / rejection /
+cancellation replacement text all land in the buffer as plain text, so
+the surrounding font-lock and major-mode faces apply normally.  Only the
+overlay (in adopt mode with a non-empty range) and the overlay's
+‘before-string’ lighter / ‘after-string’ progress bar are faced.
 
 4.4 Read-only protection
 ========================
@@ -334,11 +345,15 @@ function returns a token; pass that token to
 
      *Constructor:* ‘(pending-overlay BEG END STR)’.  Mark the region
      ‘[BEG, END]’ in the current buffer as pending an asynchronous
-     change.  Highlight the region with ‘pending-highlight’ face and
-     show STR as a lighter badge at BEG using ‘pending-lighter’ face.
-     If BEG equals END, no region is highlighted; only the lighter
-     shows.  Returns a TOKEN (a ‘pending’ struct) usable with
-     ‘pending-resolve’, ‘pending-cancel’, and ‘pending-goto’.
+     change.  When ‘BEG < END’, the overlay covers existing buffer text
+     and carries ‘pending-highlight’ as its ‘face’ property so the user
+     can see which characters the asynchronous change will rewrite (the
+     underlying buffer text is untouched -- only the overlay carries a
+     face).  STR shows as a lighter badge at BEG via the overlay's
+     ‘before-string’, faced with ‘pending-lighter’.  If BEG equals END,
+     the overlay carries no face; only the lighter shows.  Returns a
+     TOKEN (a ‘pending’ struct) usable with ‘pending-resolve’,
+     ‘pending-cancel’, and ‘pending-goto’.
 
      *Accessor:* ‘(pending-overlay TOKEN)’.  Back-compat accessor:
      return the live overlay object owned by TOKEN, or nil.  Equivalent
@@ -376,7 +391,9 @@ function returns a token; pass that token to
      Calls P's ‘:on-cancel’ callback _first_, so the caller can abort
      underlying work (e.g.  kill a process).  Then transitions P to
      ‘:cancelled’ and replaces the region with a small cancelled glyph
-     (‘✗ REASON’) faced with ‘pending-cancelled-face’.
+     (‘✗ REASON’).  The inserted glyph is plain text -- the library
+     never adds a ‘face’ property to text it inserts itself; surrounding
+     font-lock applies normally.
 
      The ‘:on-cancel’ callback is wrapped in ‘condition-case’; a buggy
      callback (or one that signals ‘quit’) does not break the cancel
@@ -461,7 +478,9 @@ bars, deadlines, and process attachment.
      ‘:deadline’      Wall-clock seconds until auto-rejection with reason
                       ‘:timed-out’.
                       
-     ‘:face’          Override ‘pending-face’ for the placeholder body.
+     ‘:face’          Override ‘pending-face’ for the OVERLAY's ‘face’
+                      property in adopt mode (BEG < END only).  Inserted
+                      text is never faced by the library.
                       
      ‘:spinner-style’ Key into ‘pending-spinner-styles’.
                       
@@ -506,9 +525,10 @@ bars, deadlines, and process attachment.
      advances with the insert because of its insertion-type.
 
      Streamed text gets the same read-only properties as the initial
-     label.  The library binds ‘inhibit-read-only’ and
-     ‘inhibit-modification-hooks’ so its own inserts do not retrigger
-     the cancel-on-collapse hook.
+     label, but no ‘face’ property: the library never faces text it
+     inserts itself, so the buffer's normal font-lock applies.  The
+     library binds ‘inhibit-read-only’ and ‘inhibit-modification-hooks’
+     so its own inserts do not retrigger the cancel-on-collapse hook.
 
      This does NOT finalize.  The caller must follow up with
      ‘pending-finish-stream’, ‘pending-reject’, or ‘pending-cancel’.
@@ -536,8 +556,9 @@ bars, deadlines, and process attachment.
  -- Function: pending-reject p reason &optional replacement-text
      Mark P as failed with REASON and replace its region.  REASON should
      be a string or a keyword/symbol describing the failure.
-     REPLACEMENT-TEXT defaults to a glyph plus the reason rendered with
-     ‘pending-error-face’.
+     REPLACEMENT-TEXT defaults to a glyph plus the reason.  The inserted
+     text is plain -- the library never adds a ‘face’ property to text
+     it inserts itself; surrounding font-lock applies normally.
 
      Side effects mirror ‘pending-resolve’ (removes overlay, clears
      markers, unregisters, cancels timer, runs ‘:on-resolve’).
@@ -902,10 +923,18 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
 11.2 Faces
 ==========
 
+The library never adds a ‘face’ text property to text it inserts itself.
+Faces are applied only to overlay properties -- the overlay's ‘face’
+(when adopting an existing region with ‘BEG < END’), the overlay's
+‘before-string’ lighter, and the overlay's ‘after-string’ progress bar.
+This means the surrounding buffer's font-lock is never disturbed by the
+placeholder library.
+
  -- Face: pending-highlight
-     Background of the highlighted region of a pending overlay
-     (‘BEG..END’).  Applied to the placeholder body so the user can see
-     where the asynchronously-arriving content will land.
+     The overlay ‘face’ for adopt-mode placeholders that cover existing
+     buffer text (‘BEG < END’).  In insert mode and zero-width adopt
+     mode the overlay carries no face.  The library never applies this
+     (or any) face as a text property to text it inserts itself.
 
  -- Face: pending-lighter
      Static badge shown at BEG of a pending overlay.  Bold white-on-red
@@ -913,9 +942,10 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      attached to the overlay's ‘before-string’, not text in the buffer.
 
  -- Face: pending-face
-     Compatibility alias for ‘pending-highlight’.  Older code paths
-     reference ‘pending-face’ for the placeholder body; new code should
-     prefer ‘pending-highlight’.
+     Default value of ‘pending-make’'s ‘:face’ keyword.  Inherits from
+     ‘pending-highlight’.  Used as the overlay's ‘face’ property only
+     when the overlay covers existing buffer text (adopt mode with a
+     non-empty range).
 
  -- Face: pending-spinner-face
      The before-string spinner glyph.
@@ -926,10 +956,14 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      alignment under variable-pitch buffer faces.
 
  -- Face: pending-error-face
-     Replacement text for rejected placeholders.
+     Retained for backward compatibility and customization.  As of
+     v0.1.0 the library does not face inserted text -- ‘pending-reject’
+     inserts plain buffer text and surrounding font-lock applies.
 
  -- Face: pending-cancelled-face
-     Replacement text for cancelled placeholders.
+     Retained for backward compatibility and customization.  As of
+     v0.1.0 the library does not face inserted text -- ‘pending-cancel’
+     inserts plain buffer text and surrounding font-lock applies.
 
 
 File: pending.info,  Node: Hooks and callbacks,  Next: Comparison,  Prev: Customization,  Up: Top
@@ -1170,8 +1204,8 @@ Index
  [index ]
 * Menu:
 
-* auto-cancellation:                     Concepts.            (line 110)
-* buffer-killed:                         Concepts.            (line 110)
+* auto-cancellation:                     Concepts.            (line 121)
+* buffer-killed:                         Concepts.            (line 121)
 * callbacks:                             Hooks and callbacks. (line   5)
 * caveats:                               Caveats.             (line   6)
 * comparison:                            Comparison.          (line   6)
@@ -1179,7 +1213,7 @@ Index
 * customization:                         Customization.       (line   5)
 * demo:                                  Interactive UI.      (line  50)
 * development:                           Development.         (line   6)
-* edit-survival:                         Concepts.            (line  90)
+* edit-survival:                         Concepts.            (line 101)
 * errors:                                Hooks and callbacks. (line  58)
 * ETA:                                   Indicator modes.     (line   6)
 * faces:                                 Customization.       (line  66)
@@ -1205,50 +1239,50 @@ Index
 * Pending buffer:                        Interactive UI.      (line   9)
 * pending list:                          Interactive UI.      (line   5)
 * pending struct:                        Concepts.            (line   9)
-* pending-active-p:                      Rich API.            (line 169)
-* pending-active-p <1>:                  Rich API.            (line 170)
+* pending-active-p:                      Rich API.            (line 173)
+* pending-active-p <1>:                  Rich API.            (line 174)
 * pending-alist:                         Concepts.            (line  54)
-* pending-alist <1>:                     Simple API.          (line  80)
-* pending-alist <2>:                     Simple API.          (line  81)
+* pending-alist <1>:                     Simple API.          (line  86)
+* pending-alist <2>:                     Simple API.          (line  87)
 * pending-allow-read-only:               Customization.       (line  42)
-* pending-at:                            Rich API.            (line 176)
-* pending-at <1>:                        Rich API.            (line 177)
-* pending-attach-process:                Rich API.            (line 132)
-* pending-attach-process <1>:            Rich API.            (line 133)
+* pending-at:                            Rich API.            (line 180)
+* pending-at <1>:                        Rich API.            (line 181)
+* pending-attach-process:                Rich API.            (line 136)
+* pending-attach-process <1>:            Rich API.            (line 137)
 * pending-bar-family:                    Customization.       (line  35)
 * pending-bar-style:                     Customization.       (line  30)
 * pending-bar-width:                     Customization.       (line  16)
-* pending-cancel:                        Simple API.          (line  52)
-* pending-cancel <1>:                    Simple API.          (line  53)
-* pending-cancel-at-point:               Simple API.          (line  89)
-* pending-cancel-at-point <1>:           Simple API.          (line  90)
-* pending-cancelled-face:                Customization.       (line  92)
-* pending-cancelled-face <1>:            Customization.       (line  93)
+* pending-cancel:                        Simple API.          (line  56)
+* pending-cancel <1>:                    Simple API.          (line  57)
+* pending-cancel-at-point:               Simple API.          (line  95)
+* pending-cancel-at-point <1>:           Simple API.          (line  96)
+* pending-cancelled-face:                Customization.       (line 103)
+* pending-cancelled-face <1>:            Customization.       (line 104)
 * pending-confirm-on-emacs-exit:         Customization.       (line  56)
 * pending-default-spinner-style:         Customization.       (line  20)
 * pending-demo:                          Interactive UI.      (line  50)
 * pending-demo <1>:                      Interactive UI.      (line  51)
 * pending-error:                         Hooks and callbacks. (line  58)
-* pending-error-face:                    Customization.       (line  89)
-* pending-error-face <1>:                Customization.       (line  90)
-* pending-face:                          Customization.       (line  76)
-* pending-face <1>:                      Customization.       (line  77)
-* pending-finish-stream:                 Rich API.            (line 107)
-* pending-finish-stream <1>:             Rich API.            (line 108)
+* pending-error-face:                    Customization.       (line  98)
+* pending-error-face <1>:                Customization.       (line  99)
+* pending-face:                          Customization.       (line  84)
+* pending-face <1>:                      Customization.       (line  85)
+* pending-finish-stream:                 Rich API.            (line 110)
+* pending-finish-stream <1>:             Rich API.            (line 111)
 * pending-fps:                           Customization.       (line   9)
-* pending-goto:                          Simple API.          (line  66)
-* pending-goto <1>:                      Simple API.          (line  67)
-* pending-highlight:                     Customization.       (line  66)
-* pending-highlight <1>:                 Customization.       (line  67)
-* pending-insert:                        Simple API.          (line  30)
-* pending-insert <1>:                    Simple API.          (line  31)
+* pending-goto:                          Simple API.          (line  72)
+* pending-goto <1>:                      Simple API.          (line  73)
+* pending-highlight:                     Customization.       (line  73)
+* pending-highlight <1>:                 Customization.       (line  74)
+* pending-insert:                        Simple API.          (line  34)
+* pending-insert <1>:                    Simple API.          (line  35)
 * pending-label-max-width:               Customization.       (line  50)
-* pending-lighter:                       Customization.       (line  71)
-* pending-lighter <1>:                   Customization.       (line  72)
-* pending-list:                          Simple API.          (line  76)
-* pending-list <1>:                      Simple API.          (line  77)
-* pending-list-active:                   Rich API.            (line 181)
-* pending-list-active <1>:               Rich API.            (line 182)
+* pending-lighter:                       Customization.       (line  79)
+* pending-lighter <1>:                   Customization.       (line  80)
+* pending-list:                          Simple API.          (line  82)
+* pending-list <1>:                      Simple API.          (line  83)
+* pending-list-active:                   Rich API.            (line 185)
+* pending-list-active <1>:               Rich API.            (line 186)
 * pending-list-cancel:                   Interactive UI.      (line  29)
 * pending-list-jump:                     Interactive UI.      (line  27)
 * pending-list-refresh:                  Interactive UI.      (line  25)
@@ -1261,28 +1295,28 @@ Index
 * pending-overlay <1>:                   Simple API.          (line  11)
 * pending-overlay-map:                   Interactive UI.      (line  43)
 * pending-overlay-map <1>:               Interactive UI.      (line  44)
-* pending-progress-face:                 Customization.       (line  84)
-* pending-progress-face <1>:             Customization.       (line  85)
-* pending-reject:                        Rich API.            (line 120)
-* pending-reject <1>:                    Rich API.            (line 121)
-* pending-resolve:                       Simple API.          (line  38)
-* pending-resolve <1>:                   Simple API.          (line  39)
-* pending-resolve-stream:                Rich API.            (line  82)
-* pending-resolve-stream <1>:            Rich API.            (line  83)
-* pending-spinner-face:                  Customization.       (line  81)
-* pending-spinner-face <1>:              Customization.       (line  82)
+* pending-progress-face:                 Customization.       (line  93)
+* pending-progress-face <1>:             Customization.       (line  94)
+* pending-reject:                        Rich API.            (line 123)
+* pending-reject <1>:                    Rich API.            (line 124)
+* pending-resolve:                       Simple API.          (line  42)
+* pending-resolve <1>:                   Simple API.          (line  43)
+* pending-resolve-stream:                Rich API.            (line  84)
+* pending-resolve-stream <1>:            Rich API.            (line  85)
+* pending-spinner-face:                  Customization.       (line  90)
+* pending-spinner-face <1>:              Customization.       (line  91)
 * pending-spinner-styles:                Customization.       (line  25)
-* pending-status:                        Rich API.            (line 173)
-* pending-status <1>:                    Rich API.            (line 174)
-* pending-update:                        Rich API.            (line  70)
-* pending-update <1>:                    Rich API.            (line  71)
+* pending-status:                        Rich API.            (line 177)
+* pending-status <1>:                    Rich API.            (line 178)
+* pending-update:                        Rich API.            (line  72)
+* pending-update <1>:                    Rich API.            (line  73)
 * piecewise asymptote:                   Indicator modes.     (line  24)
 * positional API:                        Simple API.          (line   6)
 * progress bar:                          Indicator modes.     (line   6)
 * quick start:                           Quick start.         (line   6)
-* read-only:                             Concepts.            (line  90)
+* read-only:                             Concepts.            (line 101)
 * recipes:                               Integrations.        (line   6)
-* region-deleted:                        Concepts.            (line 110)
+* region-deleted:                        Concepts.            (line 121)
 * registry:                              Concepts.            (line  54)
 * requirements:                          Installation.        (line   6)
 * rich API:                              Rich API.            (line   6)
@@ -1292,7 +1326,7 @@ Index
 * spinner styles:                        Indicator modes.     (line  34)
 * states, lifecycle:                     Concepts.            (line  17)
 * testing:                               Development.         (line   5)
-* timed-out:                             Concepts.            (line 110)
+* timed-out:                             Concepts.            (line 121)
 * token:                                 Concepts.            (line   9)
 * url-retrieve:                          Integrations.        (line  72)
 * v0.2:                                  Roadmap.             (line   6)
@@ -1305,20 +1339,20 @@ Node: Introduction2435
 Node: Installation4348
 Node: Quick start5262
 Node: Concepts6569
-Node: Simple API11258
-Node: Rich API15455
-Node: Indicator modes23454
-Node: Integrations25158
-Node: Interactive UI29642
-Node: Mode-line lighter31440
-Node: Customization32437
-Node: Hooks and callbacks36348
-Node: Comparison38486
-Node: Caveats40824
-Node: Roadmap42170
-Node: Development42815
-Node: GNU Free Documentation License44511
-Node: Index44848
+Node: Simple API11945
+Node: Rich API16544
+Node: Indicator modes24909
+Node: Integrations26613
+Node: Interactive UI31097
+Node: Mode-line lighter32895
+Node: Customization33892
+Node: Hooks and callbacks38669
+Node: Comparison40807
+Node: Caveats43145
+Node: Roadmap44491
+Node: Development45136
+Node: GNU Free Documentation License46832
+Node: Index47169
 
 End Tag Table
 
