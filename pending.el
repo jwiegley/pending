@@ -2250,25 +2250,29 @@ mode-line construct disappears entirely.
 The returned string is propertized with `pending-spinner-face',
 carries a `help-echo' tooltip describing the count, and binds
 `mouse-1' to `pending-list' so clicking the lighter opens the
-*Pending* list buffer."
-  (let* ((actives (pending-list-active))
-         (count (length actives)))
+*Pending* list buffer.
+
+This runs once per redisplay; the implementation makes a single
+`maphash' pass over `pending--registry' tracking the count and the
+smallest positive remaining ETA simultaneously rather than going
+through `pending-list-active' (consing a list) and then a separate
+`mapcar' / `apply min'."
+  (let ((count 0)
+        (best nil)
+        (now (float-time)))
+    (maphash
+     (lambda (_id p)
+       (when (pending-active-p p)
+         (cl-incf count)
+         (let ((eta (pending-eta p))
+               (st  (pending-start-time p)))
+           (when (and eta st)
+             (let ((rem (- eta (- now st))))
+               (when (and (> rem 0) (or (null best) (< rem best)))
+                 (setq best rem)))))))
+     pending--registry)
     (when (> count 0)
-      (let* ((next-eta
-              (let ((rems
-                     (delq nil
-                           (mapcar
-                            (lambda (p)
-                              (let ((eta (pending-eta p))
-                                    (st  (pending-start-time p)))
-                                (when (and eta st)
-                                  (let ((rem (- eta (- (float-time) st))))
-                                    (and (> rem 0) rem)))))
-                            actives))))
-                (when rems (apply #'min rems))))
-             (eta-text (if next-eta
-                           (format "~%ds" (max 1 (round next-eta)))
-                         ""))
+      (let* ((eta-text (if best (format "~%ds" (max 1 (round best))) ""))
              (text (format " [%d⏳%s]" count eta-text)))
         (propertize text
                     'face 'pending-spinner-face
