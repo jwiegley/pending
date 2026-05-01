@@ -45,7 +45,7 @@ authoritative design is in `DESIGN.md`; this is the scratchpad of
   not block exit by default.
 - **Pulse on resolve**: gptel does
   `pulse-momentary-highlight-region` on response insertion.
-  We could do the same in `pending-resolve`. Cheap, nice UX. Probably
+  We could do the same in `pending-finish`. Cheap, nice UX. Probably
   v1.
 - **Overlay priority value**: DESIGN.md says 100; check no other
   package in the user's setup conflicts (gptel uses default).
@@ -92,7 +92,7 @@ caller's overlay would stack on the first. We should:
 
 - Promise adapter: `pending-as-promise` returning an `aio-promise`.
 - SVG spinners with cached image-string per (face,size,frame).
-- `pending-resolve` accepts a function instead of a string —
+- `pending-finish` accepts a function instead of a string —
   invoked at resolution time with the struct, returns the
   replacement text. Useful for late binding.
 - Group-level operations: `pending-cancel-group`,

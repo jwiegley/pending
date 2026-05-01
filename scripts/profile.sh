@@ -20,11 +20,11 @@ run_once() {
 (let* ((iters 1000)
        (suite
         (list
-         (cons 'make-and-resolve
+         (cons 'make-and-finish
                (lambda ()
                  (with-temp-buffer
                    (let ((p (pending-make (current-buffer) :label \"x\")))
-                     (pending-resolve p \"y\")))))
+                     (pending-finish p \"y\")))))
          (cons 'gen-id
                (lambda () (pending--gen-id)))
          (cons 'render-bar-eighths

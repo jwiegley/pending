@@ -124,8 +124,8 @@ dependencies.
 
      (use-package pending
        :vc (:url "https://github.com/jwiegley/pending")
-       :commands (pending-make pending-overlay pending-insert
-                  pending-resolve pending-cancel pending-list
+       :commands (pending-make pending-region pending-insert
+                  pending-finish pending-cancel pending-list
                   pending-demo)
        :config
        (global-pending-lighter-mode 1))
@@ -147,24 +147,24 @@ pending, then atomically replace it when the answer arrives.
 3.1 Mark a region for rewrite
 =============================
 
-     (let ((tok (pending-overlay (line-beginning-position)
-                                 (line-end-position)
-                                 "rewriting")))
+     (let ((tok (pending-region (line-beginning-position)
+                                (line-end-position)
+                                "rewriting")))
        ;; ... kick off async work ...
-       (pending-resolve tok "the new text"))
+       (pending-finish tok "the new text"))
 
 3.2 Mark a single point for insertion
 =====================================
 
      (let ((tok (pending-insert (point) "Calling Claude")))
-       (run-at-time 2 nil (lambda () (pending-resolve tok "Hello!"))))
+       (run-at-time 2 nil (lambda () (pending-finish tok "Hello!"))))
 
 3.3 Cancel from point
 =====================
 
 Place the cursor on a placeholder and run ‘M-x pending-cancel-at-point’.
 The placeholder's overlay also binds ‘RET’ and ‘mouse-1’ to the same
-command via ‘pending-overlay-map’, so a single ‘RET’ on the highlighted
+command via ‘pending-region-map’, so a single ‘RET’ on the highlighted
 region cancels the in-flight work.
 
 3.4 Show the lighter mode
@@ -185,7 +185,7 @@ File: pending.info,  Node: Concepts,  Next: Simple API,  Prev: Quick start,  Up:
 ==========
 
 Every constructor returns a “token” -- a ‘pending’ struct used as a
-handle for the placeholder.  Pass the token to ‘pending-resolve’,
+handle for the placeholder.  Pass the token to ‘pending-finish’,
 ‘pending-cancel’, ‘pending-update’, and friends to operate on the
 placeholder.
 
@@ -251,11 +251,11 @@ The library distinguishes two visual treatments:
 
 *Region highlight*
      When the overlay covers existing buffer text (adopt mode
-     ‘pending-overlay BEG END STR’ with ‘BEG < END’), the overlay
-     carries ‘pending-highlight’ as its ‘face’ property so the user can
-     see _which_ characters the asynchronous change will rewrite.  In
-     insert mode and zero-width adopt mode the overlay has no face --
-     there is no pre-existing region to highlight.
+     ‘pending-region BEG END STR’ with ‘BEG < END’), the overlay carries
+     ‘pending-highlight’ as its ‘face’ property so the user can see
+     _which_ characters the asynchronous change will rewrite.  In insert
+     mode and zero-width adopt mode the overlay has no face -- there is
+     no pre-existing region to highlight.
 
 *Lighter*
      A small bold badge (face ‘pending-lighter’) attached to the
@@ -332,12 +332,12 @@ File: pending.info,  Node: Simple API,  Next: Rich API,  Prev: Concepts,  Up: To
 
 The simple positional API is the recommended starting point.  Each
 function returns a token; pass that token to
-‘pending-resolve’/‘pending-cancel’ when ready.
+‘pending-finish’/‘pending-cancel’ when ready.
 
- -- Function: pending-overlay beg-or-token &optional end str
+ -- Function: pending-region beg-or-token &optional end str
      Two call shapes are supported.
 
-     *Constructor:* ‘(pending-overlay BEG END STR)’.  Mark the region
+     *Constructor:* ‘(pending-region BEG END STR)’.  Mark the region
      ‘[BEG, END]’ in the current buffer as pending an asynchronous
      change.  When ‘BEG < END’, the overlay covers existing buffer text
      and carries ‘pending-highlight’ as its ‘face’ property so the user
@@ -346,27 +346,27 @@ function returns a token; pass that token to
      face).  STR shows as a lighter badge at BEG via the overlay's
      ‘before-string’, faced with ‘pending-lighter’.  If BEG equals END,
      the overlay carries no face; only the lighter shows.  Returns a
-     TOKEN (a ‘pending’ struct) usable with ‘pending-resolve’,
+     TOKEN (a ‘pending’ struct) usable with ‘pending-finish’,
      ‘pending-cancel’, and ‘pending-goto’.
 
-     *Accessor:* ‘(pending-overlay TOKEN)’.  Back-compat accessor:
-     return the live overlay object owned by TOKEN, or nil.  Equivalent
-     to ‘(pending-ov TOKEN)’.
+     *Accessor:* ‘(pending-region TOKEN)’.  Back-compat accessor: return
+     the live overlay object owned by TOKEN, or nil.  Equivalent to
+     ‘(pending-ov TOKEN)’.
 
-          (let ((tok (pending-overlay (region-beginning) (region-end)
-                                      "summarising")))
+          (let ((tok (pending-region (region-beginning) (region-end)
+                                     "summarising")))
             (gptel-request (buffer-substring (region-beginning) (region-end))
-             :callback (lambda (text _) (pending-resolve tok text))))
+             :callback (lambda (text _) (pending-finish tok text))))
 
  -- Function: pending-insert pos str
      Mark POS as pending insertion of asynchronously-computed text.
      Shows STR as a lighter badge at POS. No region is highlighted (BEG
      = END). Returns a token.  When eventually resolved with text via
-     ‘pending-resolve’, the text is inserted at POS.
+     ‘pending-finish’, the text is inserted at POS.
 
           (pending-insert (point) "fetching weather")
 
- -- Function: pending-resolve token text
+ -- Function: pending-finish token text
      Atomically replace TOKEN's region with TEXT. Transition to
      ‘:resolved’.  Returns t on success, nil if TOKEN was already in a
      terminal state.
@@ -378,7 +378,7 @@ function returns a token; pass that token to
      token, cancels any deadline timer, and runs the ‘:on-resolve’
      callback once (errors there are caught and warned).
 
-          (pending-resolve tok "Hello, world!")
+          (pending-finish tok "Hello, world!")
 
  -- Function: pending-cancel p &optional reason
      Cancel P, optionally with REASON (default ‘:cancelled-by-user’).
@@ -422,7 +422,7 @@ function returns a token; pass that token to
  -- Command: pending-cancel-at-point
      Cancel the pending placeholder at point.  Signals a ‘user-error’ if
      no placeholder covers point.  Bound to ‘RET’ and ‘mouse-1’ over a
-     placeholder by ‘pending-overlay-map’.
+     placeholder by ‘pending-region-map’.
 
 
 File: pending.info,  Node: Rich API,  Next: Indicator modes,  Prev: Simple API,  Up: Top
@@ -542,7 +542,7 @@ bars, deadlines, and process attachment.
      unregisters P, and fires its ‘:on-resolve’ callback.
 
      If P is ‘:scheduled’ or ‘:running’ (no chunks were ever streamed),
-     behaves like ‘(pending-resolve P "")’.  If P is already terminal, a
+     behaves like ‘(pending-finish P "")’.  If P is already terminal, a
      no-op with debug warning.
 
           (pending-finish-stream tok)
@@ -554,7 +554,7 @@ bars, deadlines, and process attachment.
      text is plain -- the library never adds a ‘face’ property to text
      it inserts itself; surrounding font-lock applies normally.
 
-     Side effects mirror ‘pending-resolve’ (removes overlay, clears
+     Side effects mirror ‘pending-finish’ (removes overlay, clears
      markers, unregisters, cancels timer, runs ‘:on-resolve’).
 
           (pending-reject tok "API rate limit exceeded")
@@ -694,7 +694,7 @@ commands, and URLs to taste.
           prompt
           :callback (lambda (response info)
                       (cond
-                       ((stringp response) (pending-resolve p response))
+                       ((stringp response) (pending-finish p response))
                        ((plist-get info :error)
                         (pending-reject p (plist-get info :error)))
                        (t (pending-cancel p)))))
@@ -740,7 +740,7 @@ commands, and URLs to taste.
              (t
               (goto-char (point-min))
               (re-search-forward "^$" nil t)
-              (pending-resolve p (buffer-substring (point) (point-max)))))))
+              (pending-finish p (buffer-substring (point) (point-max)))))))
          p))
 
 8.5 Pure-delay timer
@@ -754,7 +754,7 @@ A useful template for tests and demos:
          (run-at-time seconds nil
                       (lambda ()
                         (when (pending-active-p p)
-                          (pending-resolve p text))))
+                          (pending-finish p text))))
          p))
 
 8.6 Generic callback-driven async
@@ -763,7 +763,7 @@ A useful template for tests and demos:
      (defun my/with-pending (label callback)
        "Show a pending placeholder labelled LABEL.
      CALLBACK is called with the token; it must arrange to call
-     `pending-resolve' or `pending-reject' on the token."
+     `pending-finish' or `pending-reject' on the token."
        (let ((p (pending-make (current-buffer)
                               :label label
                               :indicator :spinner)))
@@ -813,7 +813,7 @@ Auto-refresh is on the v0.2 roadmap.
 library installs an overlay keymap on every placeholder binding ‘RET’
 and ‘mouse-1’ to the same command:
 
- -- Variable: pending-overlay-map
+ -- Variable: pending-region-map
      Keymap installed on placeholder overlays.  Bound to ‘RET’ and
      ‘mouse-1’ for ‘pending-cancel-at-point’.
 
@@ -1261,6 +1261,8 @@ Index
 * pending-error-face <1>:                Customization.       (line  99)
 * pending-face:                          Customization.       (line  84)
 * pending-face <1>:                      Customization.       (line  85)
+* pending-finish:                        Simple API.          (line  42)
+* pending-finish <1>:                    Simple API.          (line  43)
 * pending-finish-stream:                 Rich API.            (line 110)
 * pending-finish-stream <1>:             Rich API.            (line 111)
 * pending-fps:                           Customization.       (line   9)
@@ -1285,16 +1287,14 @@ Index
 * pending-make <2>:                      Rich API.            (line   6)
 * pending-mode-line-string:              Mode-line lighter.   (line  20)
 * pending-mode-line-string <1>:          Mode-line lighter.   (line  21)
-* pending-overlay:                       Simple API.          (line  10)
-* pending-overlay <1>:                   Simple API.          (line  11)
-* pending-overlay-map:                   Interactive UI.      (line  43)
-* pending-overlay-map <1>:               Interactive UI.      (line  44)
 * pending-progress-face:                 Customization.       (line  93)
 * pending-progress-face <1>:             Customization.       (line  94)
+* pending-region:                        Simple API.          (line  10)
+* pending-region <1>:                    Simple API.          (line  11)
+* pending-region-map:                    Interactive UI.      (line  43)
+* pending-region-map <1>:                Interactive UI.      (line  44)
 * pending-reject:                        Rich API.            (line 123)
 * pending-reject <1>:                    Rich API.            (line 124)
-* pending-resolve:                       Simple API.          (line  42)
-* pending-resolve <1>:                   Simple API.          (line  43)
 * pending-resolve-stream:                Rich API.            (line  84)
 * pending-resolve-stream <1>:            Rich API.            (line  85)
 * pending-spinner-face:                  Customization.       (line  90)
@@ -1331,22 +1331,22 @@ Tag Table:
 Node: Top517
 Node: Introduction1942
 Node: Installation3855
-Node: Quick start4769
-Node: Concepts6076
-Node: Simple API11452
-Node: Rich API16051
-Node: Indicator modes24416
-Node: Integrations26120
-Node: Interactive UI30604
-Node: Mode-line lighter32402
-Node: Customization33399
-Node: Hooks and callbacks38176
-Node: Comparison40314
-Node: Caveats42652
-Node: Roadmap43998
-Node: Development44643
-Node: License46316
-Node: Index46636
+Node: Quick start4767
+Node: Concepts6068
+Node: Simple API11442
+Node: Rich API16029
+Node: Indicator modes24392
+Node: Integrations26096
+Node: Interactive UI30576
+Node: Mode-line lighter32373
+Node: Customization33370
+Node: Hooks and callbacks38147
+Node: Comparison40285
+Node: Caveats42623
+Node: Roadmap43969
+Node: Development44614
+Node: License46287
+Node: Index46607
 
 End Tag Table
 

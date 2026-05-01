@@ -115,11 +115,11 @@ The question is whether `pending-make` should return a struct (callback
 shape) or a promise (`thenable` / `aio-await` shape).
 
 - **callback shape**: `(pending-make ...)` returns a struct; the caller
-  later does `(pending-resolve p text)`. Simple, no dep, matches every
+  later does `(pending-finish p text)`. Simple, no dep, matches every
   existing async surface in Emacs (process sentinels, `url-retrieve`'s
   callback, `gptel-request`'s `:callback`).
 - **promise shape**: `(pending-make ...)` returns a promise that
-  resolves when `(pending-resolve ...)` is called elsewhere. Composable
+  resolves when `(pending-finish ...)` is called elsewhere. Composable
   with `aio-await`, but adds either a hard dep (`aio`) or a parallel
   promise impl.
 
@@ -258,7 +258,7 @@ State diagram:
                       │                          │
             (first stream chunk OR               │
              pending-update OR                   │
-             pending-resolve)                    │
+             pending-finish)                     │
                       ▼                          │
                   :running ◄─┐                   │
                       │      │                   │
@@ -320,7 +320,7 @@ upgrade to `(format "%s-%d" (random) (cl-incf pending--next-id))` or
 
 ### Ownership
 
-- The **caller** owns `pending-resolve`, `pending-resolve-stream`,
+- The **caller** owns `pending-finish`, `pending-resolve-stream`,
   `pending-finish-stream`, `pending-reject`, `pending-update`. These
   are how the producer reports progress and finalizes.
 - The **library** owns the timer, overlay rendering, registry mutation,
@@ -421,10 +421,10 @@ Edge cases:
 - No `:label` given and no `:group` either: log nothing, just default
   the label to "Pending".
 
-### `pending-resolve`
+### `pending-finish`
 
 ```elisp
-(defun pending-resolve (p text)
+(defun pending-finish (p text)
   "Atomically replace P's placeholder region with TEXT.
 Transitions P to `:resolved' and returns t.  No-op + warning if P is
 already terminal.
@@ -482,7 +482,7 @@ overlay's animated decorations, removes read-only protection,
 deletes overlay, unregisters, fires ON-RESOLVE.
 
 If P is in `:running' (no chunks ever streamed), behaves like
-`(pending-resolve P \"\")'."
+`(pending-finish P \"\")'."
   ...)
 ```
 
@@ -581,7 +581,7 @@ if BODY signals.
 
   (pending-with (p :buffer (current-buffer) :label \"Calling LLM\")
     (gptel-request \"hi\"
-      :callback (lambda (resp _) (pending-resolve p resp))))
+      :callback (lambda (resp _) (pending-finish p resp))))
 
 The macro expands to a `condition-case' wrapping BODY so that uncaught
 errors do not leave the placeholder hanging forever."
@@ -629,7 +629,7 @@ Properties:
 | `insert-in-front-hooks` | `(pending--on-edge-insert)`                      |
 | `insert-behind-hooks`   | `(pending--on-edge-insert)`                      |
 | `help-echo`         | function returning the dynamic tooltip               |
-| `keymap`            | `pending-overlay-map` — RET / mouse-1 → cancel       |
+| `keymap`            | `pending-region-map` — RET / mouse-1 → cancel        |
 | `cursor-sensor-functions` | nil (we keep the placeholder cursor-friendly)  |
 
 **`before-string` vs `display` vs `after-string` trade-off**:
@@ -1082,7 +1082,7 @@ Returns P."
   (pcase event
     ((pred (string-prefix-p "finished"))
      ;; Process exited cleanly.  We don't auto-resolve; the caller
-     ;; should have already called pending-resolve.  If not, something
+     ;; should have already called pending-finish.  If not, something
      ;; is wrong — reject.
      (when (pending-active-p p)
        (pending-reject p "process exited without resolving")))
@@ -1181,7 +1181,7 @@ Cancelled in `pending--unregister`:
         (t
          (goto-char (point-min))
          (re-search-forward "^$" nil t)
-         (pending-resolve p (buffer-substring (point) (point-max)))))))
+         (pending-finish p (buffer-substring (point) (point-max)))))))
     p))
 ```
 
@@ -1193,7 +1193,7 @@ Cancelled in `pending--unregister`:
                           :label (format "Wait %ds" seconds)
                           :indicator :eta :eta (float seconds))))
     (run-at-time seconds nil
-                 (lambda () (pending-resolve p (format "done after %ds" seconds))))
+                 (lambda () (pending-finish p (format "done after %ds" seconds))))
     p))
 ```
 
@@ -1247,7 +1247,7 @@ Streaming:
 - `pending-test/stream-append-correctness`: stream three chunks, assert
   `(buffer-substring start end)` equals the concatenation.
 - `pending-test/stream-then-resolve-replaces`: stream "abc", then
-  `pending-resolve` with "xyz"; assert region text is "xyz".
+  `pending-finish` with "xyz"; assert region text is "xyz".
 
 Registry:
 
@@ -1319,7 +1319,7 @@ mocked.  `(pending-test--advance SECONDS)' fires due timers."
     (my/pending-delay 8)
     (insert "  ")
     (let ((p (pending-make buf :label "Indeterminate" :indicator :spinner)))
-      (run-at-time 12 nil (lambda () (pending-resolve p "[done]"))))
+      (run-at-time 12 nil (lambda () (pending-finish p "[done]"))))
     (insert "  ")
     (let ((p (pending-make buf :label "Determinate"
                                :indicator :percent :percent 0.0)))
@@ -1438,7 +1438,7 @@ Deliverables:
 - `pending-make` (insert + adopt modes; without spinner timer yet).
 - `pending--register`, `pending--unregister` keeping both registries
   synced.
-- `pending-resolve`, `pending-reject`, `pending-cancel`.
+- `pending-finish`, `pending-reject`, `pending-cancel`.
 - `pending--swap-region` (atomic replacement).
 - `pending-active-p`, `pending-status`, `pending-at`,
   `pending-list-active`.
@@ -1569,7 +1569,7 @@ Deliverables:
 - `pending-mode-line-string` returning `" [3⏳~12s]"` style; opt-in
   via `(global-pending-lighter-mode)` minor mode that adds the
   function to `global-mode-string`.
-- `pending-overlay-map` binding `RET` and `[mouse-1]` to
+- `pending-region-map` binding `RET` and `[mouse-1]` to
   `pending-cancel-at-point`.
 
 Exit: `M-x pending-list` opens a buffer with current placeholders;

@@ -36,7 +36,7 @@
 ;; command, the overlay keymap, and an opt-in mode-line lighter).
 ;; On top of the Phase 1 skeleton (customization group, faces,
 ;; struct, error symbol, registries) and Phase 2 core lifecycle
-;; (`pending-make' in insert and adopt modes, `pending-resolve',
+;; (`pending-make' in insert and adopt modes, `pending-finish',
 ;; `pending-reject', `pending-cancel', `pending-update', the public
 ;; predicates and accessors, registry sync, the `kill-buffer-hook'
 ;; teardown), Phase 3 added a single global animation timer that
@@ -286,8 +286,8 @@ inserts plain buffer text and surrounding font-lock applies."
   id group label
   ;; Location.  The slot for the placeholder overlay is named `ov'
   ;; (auto-generated accessor: `pending-ov'), so the public symbol
-  ;; `pending-overlay' is free for the positional constructor below.
-  ;; A multi-arity wrapper named `pending-overlay' below preserves
+  ;; `pending-region' is free for the positional constructor below.
+  ;; A multi-arity wrapper named `pending-region' below preserves
   ;; the historical 1-arg accessor call shape for back-compat.
   buffer start end ov
   ;; Visual mode
@@ -698,7 +698,7 @@ Dispatches on `(pending-indicator p)':
               remaining seconds.
   `:lighter' — static badge mode: `before-string' is the placeholder's
               label propertized with `pending-lighter'.  No animation,
-              no after-string.  Used by `pending-overlay' and
+              no after-string.  Used by `pending-region' and
               `pending-insert' for visual badge placeholders.
 
 The spinner glyph debounces via `(pending-last-frame p)' so we only
@@ -808,7 +808,7 @@ again at the next available tick."
 
 ;;; Overlay keymap
 
-(defvar pending-overlay-map
+(defvar pending-region-map
   (let ((m (make-sparse-keymap)))
     (define-key m (kbd "RET") #'pending-cancel-at-point)
     (define-key m [mouse-1] #'pending-cancel-at-point)
@@ -1012,8 +1012,8 @@ position falls outside BUFFER's bounds."
                              (pending-status p))))
       ;; Bind RET / mouse-1 over the placeholder so the user can cancel
       ;; an in-flight placeholder interactively without typing the
-      ;; command's name.  See `pending-overlay-map'.
-      (overlay-put ov 'keymap pending-overlay-map)
+      ;; command's name.  See `pending-region-map'.
+      (overlay-put ov 'keymap pending-region-map)
       (pending--register p)
       ;; For `:lighter' (static badge) mode, render once now so the
       ;; lighter is visible without waiting for the animation timer.
@@ -1042,7 +1042,7 @@ position falls outside BUFFER's bounds."
 ;;; Public API: simple positional surface (overlay / insert / goto / alist)
 
 ;;;###autoload
-(defun pending-overlay (beg-or-token &optional end str)
+(defun pending-region (beg-or-token &optional end str)
   "Create a pending overlay or return a token's overlay.
 
 BEG-OR-TOKEN is either a buffer position (integer or marker) — in
@@ -1051,19 +1051,19 @@ struct, in which case END and STR are nil.
 
 Two call shapes are supported:
 
-  (pending-overlay BEG END STR)
+  (pending-region BEG END STR)
     Mark the region [BEG, END] in the current buffer as pending an
     asynchronous change.  Highlights the region with
     `pending-highlight' face and shows STR as a lighter badge at BEG
     using `pending-lighter' face.  If BEG equals END, no region is
     highlighted; only the lighter shows.  The lighter is a visual
     `before-string' overlay; no buffer text is inserted.  Returns a
-    TOKEN (a `pending' struct) usable with `pending-resolve',
+    TOKEN (a `pending' struct) usable with `pending-finish',
     `pending-cancel', and `pending-goto'.  The token is registered in
     the global registry; query snapshots via `pending-alist' and the
     interactive `pending-list' command.
 
-  (pending-overlay TOKEN)
+  (pending-region TOKEN)
     Back-compat accessor: return the live overlay object owned by
     TOKEN, or nil if the placeholder has been resolved or cleaned up.
     Equivalent to `(pending-ov TOKEN)'.
@@ -1089,17 +1089,17 @@ for the common visual-badge use case."
 Shows STR as a lighter badge at POS using `pending-lighter' face.
 No region is highlighted (BEG = END).
 
-Returns a TOKEN usable with `pending-resolve', `pending-cancel',
+Returns a TOKEN usable with `pending-finish', `pending-cancel',
 and `pending-goto'.  When eventually resolved with text via
-`pending-resolve', the text is inserted at POS."
-  (pending-overlay pos pos str))
+`pending-finish', the text is inserted at POS."
+  (pending-region pos pos str))
 
 (defun pending-alist ()
   "Return an alist snapshot of all currently registered pending placeholders.
 Each element is (ID . PENDING-STRUCT).  Order is unspecified.
 
 This is a fresh list; mutating the alist does not affect the
-underlying registry.  Use the API functions (`pending-resolve',
+underlying registry.  Use the API functions (`pending-finish',
 `pending-cancel', `pending-goto') to operate on tokens."
   (let (result)
     (maphash
@@ -1134,7 +1134,7 @@ are registered."
 ;;;###autoload
 (defun pending-goto (token)
   "Move point to the buffer position of TOKEN.
-TOKEN is a `pending' struct as returned by `pending-overlay' or
+TOKEN is a `pending' struct as returned by `pending-region' or
 `pending-insert'.  Switches to TOKEN's buffer if it is not already
 current.  Signals a `user-error' if the buffer is dead.
 
@@ -1153,7 +1153,7 @@ placeholders."
 
 ;;; Public API: terminal transitions
 
-(defun pending-resolve (p text)
+(defun pending-finish (p text)
   "Atomically replace P's placeholder region with TEXT.
 Transition P to `:resolved'.  Return t on success, or nil if P was
 already in a terminal state (in which case a `:debug' warning is
@@ -1180,7 +1180,7 @@ The inserted text carries no `face' property — the library never
 faces text it inserts itself; surrounding font-lock and major-mode
 faces apply normally.
 
-Side effects mirror `pending-resolve' (removes overlay, clears
+Side effects mirror `pending-finish' (removes overlay, clears
 markers, unregisters, cancels timer, runs `on-resolve')."
   (let ((text (or replacement-text
                   (format "✗ %s"
@@ -1350,7 +1350,7 @@ the overlay, unregister P, and fire its `on-resolve' callback.
 Mirrors gptel's finalize pattern at gptel.el:1389.
 Return t on success.
 If P is `:scheduled' or `:running' (no chunks were ever streamed),
-behave like `(pending-resolve P \"\")'.
+behave like `(pending-finish P \"\")'.
 If P is already terminal, this is a no-op and a `:debug' warning
 is logged."
   (cond
@@ -1364,7 +1364,7 @@ is logged."
    ((memq (pending-status p) '(:scheduled :running))
     ;; No chunks ever streamed — replace the label with the empty
     ;; string, going through the regular resolve path.
-    (pending-resolve p ""))
+    (pending-finish p ""))
    (t
     ;; In :streaming state — finalize without re-swapping the buffer
     ;; text (it already holds the streamed content).  Buffer-mutation
@@ -1478,7 +1478,7 @@ connect), `\"run\\n\"' (resumed), and `\"stopped\\n\"' (suspended):
   - `exit' status with code 0 — if P is still active, reject with
     \"process exited without resolving\".  This represents a
     process that ran to completion but the caller did not call
-    `pending-resolve' on P explicitly.
+    `pending-finish' on P explicitly.
   - `exit' with non-zero code, `signal', `failed', or `closed' —
     reject with a `\"process: ...\"' reason describing the cause.
   - Any live status (`run', `open', `stop', `listen', `connect') —
@@ -1593,7 +1593,7 @@ Interactive equivalent of `pending-cancel' on `pending-at'.
 
 If no pending overlay covers point, signal a `user-error'.  Reason
 slot is set to `:cancelled-by-user'.  This command is bound under
-`pending-overlay-map' to `RET' and `mouse-1' so users can activate a
+`pending-region-map' to `RET' and `mouse-1' so users can activate a
 placeholder directly to cancel it."
   (interactive)
   (let ((p (pending-at)))
@@ -1855,12 +1855,12 @@ seconds."
       (let ((p (pending-make buf :label "Calling A"
                              :indicator :spinner)))
         (run-at-time 3 nil (lambda () (when (pending-active-p p)
-                                        (pending-resolve p "A done")))))
+                                        (pending-finish p "A done")))))
       (insert "\nETA (8s):        ")
       (let ((p (pending-make buf :label "Calling B"
                              :indicator :eta :eta 8.0)))
         (run-at-time 8 nil (lambda () (when (pending-active-p p)
-                                        (pending-resolve p "B done")))))
+                                        (pending-finish p "B done")))))
       (insert "\nPercent (0..1):  ")
       (let ((p (pending-make buf :label "Calling C"
                              :indicator :percent :percent 0.0)))
@@ -1870,7 +1870,7 @@ seconds."
                          (when (pending-active-p p)
                            (pending-update p :percent (/ (1+ i) 10.0))
                            (when (= i 9)
-                             (pending-resolve p "C done")))))))
+                             (pending-finish p "C done")))))))
       (insert "\n\nPress `q' to bury this buffer.\n")
       (insert "Use `M-x pending-cancel-at-point' (or RET on a placeholder) to cancel.\n")
       (insert "Use `M-x pending-list' to see all active placeholders.\n")

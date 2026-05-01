@@ -72,8 +72,8 @@ pass, both files checkdoc clean, and (if you touched the API or texi)
 
 There are two public surfaces and they MUST stay aligned:
 
-- **Simple positional API** (the user-facing default): `pending-overlay
-  BEG END STR`, `pending-insert POS STR`, `pending-resolve TOKEN STR`,
+- **Simple positional API** (the user-facing default): `pending-region
+  BEG END STR`, `pending-insert POS STR`, `pending-finish TOKEN STR`,
   `pending-cancel TOKEN`, `pending-goto TOKEN`, `pending-list`,
   `pending-alist`.
 - **Rich keyword API** (for streaming, animation, deadlines, processes):
@@ -154,7 +154,7 @@ auto-cancel.
 
 The library **never** adds `face` text properties to text it inserts. The
 overlay's `face` property is set only in adopt mode with a non-empty range
-(BEG < END in `pending-overlay`). Insert mode and zero-width adopt mode
+(BEG < END in `pending-region`). Insert mode and zero-width adopt mode
 leave the overlay face nil. The lighter (a `before-string`) is faced with
 `pending-lighter`; that's the single visual cue for those modes.
 

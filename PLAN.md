@@ -84,7 +84,7 @@ mechanical.
       both registries atomically).
 - [x] `pending--swap-region` (atomic delete + insert).
 - [x] `pending-make` — insert mode and adopt mode.
-- [x] `pending-resolve`.
+- [x] `pending-finish`.
 - [x] `pending-reject`.
 - [x] `pending-cancel` — calls `on-cancel` callback first.
 - [x] Single-resolution invariant: early return on terminal status.
@@ -215,7 +215,7 @@ lighter.
 - [ ] Auto-refresh on registry mutation (or polled at 1 Hz).
       *(Deferred to v0.2 — manual refresh via `g` for v0.1.)*
 - [x] `pending-cancel-at-point` using `pending-at`.
-- [x] `pending-overlay-map` binding `RET` and `[mouse-1]` to
+- [x] `pending-region-map` binding `RET` and `[mouse-1]` to
       `pending-cancel-at-point`.
 - [x] `pending-mode-line-string` returning a glyph + count + nearest
       ETA.

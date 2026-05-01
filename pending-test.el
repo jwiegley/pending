@@ -123,14 +123,14 @@ ordering and the *Pending* list view stay deterministic."
 (ert-deftest pending-test/scheduled-to-resolved ()
   "Creating then resolving leaves status `:resolved' and replaces text."
   (pending-test--with-fresh-registry
-    (pending-test--with-buffer (buf "*pending-resolve*")
+    (pending-test--with-buffer (buf "*pending-finish*")
       (with-current-buffer buf
         (insert "Before: ")
         (let ((p (pending-make buf :label "Calling")))
           (should (eq (pending-status p) :scheduled))
           (should (equal (buffer-string) "Before: Calling"))
           (insert " :After")
-          (pending-resolve p "DONE")
+          (pending-finish p "DONE")
           (should (eq (pending-status p) :resolved))
           (should (equal (buffer-string) "Before: DONE :After")))))))
 
@@ -164,27 +164,27 @@ ordering and the *Pending* list view stay deterministic."
           (should (eq (pending-status p) :cancelled))
           (should (eq (pending-reason p) :reasons-of-state)))))))
 
-(ert-deftest pending-test/no-double-resolve ()
+(ert-deftest pending-test/no-double-finish ()
   "Resolving twice is a no-op on the second call; status persists."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*pending-double*")
       (with-current-buffer buf
         (let ((warning-minimum-log-level :error)
               (p (pending-make buf :label "Calling")))
-          (should (eq t (pending-resolve p "first")))
-          (should (eq nil (pending-resolve p "second")))
+          (should (eq t (pending-finish p "first")))
+          (should (eq nil (pending-finish p "second")))
           (should (eq (pending-status p) :resolved))
           (should (string-match-p "first" (buffer-string))))))))
 
-(ert-deftest pending-test/no-resolve-after-reject ()
-  "`pending-resolve' after `pending-reject' is suppressed."
+(ert-deftest pending-test/no-finish-after-reject ()
+  "`pending-finish' after `pending-reject' is suppressed."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*pending-reject-resolve*")
       (with-current-buffer buf
         (let ((warning-minimum-log-level :error)
               (p (pending-make buf :label "Calling")))
           (should (eq t (pending-reject p "nope")))
-          (should (eq nil (pending-resolve p "late")))
+          (should (eq nil (pending-finish p "late")))
           (should (eq (pending-status p) :rejected)))))))
 
 
@@ -203,9 +203,9 @@ ordering and the *Pending* list view stay deterministic."
               (should (= 3 (hash-table-count pending--registry)))
               (should (= 3 (length (buffer-local-value
                                     'pending--buffer-registry buf))))
-              (pending-resolve p1 "1")
-              (pending-resolve p2 "2")
-              (pending-resolve p3 "3")
+              (pending-finish p1 "1")
+              (pending-finish p2 "2")
+              (pending-finish p3 "3")
               (should (= 0 (hash-table-count pending--registry)))
               (should (= 0 (length (buffer-local-value
                                     'pending--buffer-registry buf)))))))))))
@@ -249,7 +249,7 @@ ordering and the *Pending* list view stay deterministic."
         (let ((p (pending-make buf :label "Hello")))
           (goto-char (1+ (marker-position (pending-start p))))
           (should (eq (pending-at) p))
-          (pending-resolve p "X")
+          (pending-finish p "X")
           (should (null (pending-at))))))))
 
 (ert-deftest pending-test/pending-list-active-filtered ()
@@ -285,7 +285,7 @@ ordering and the *Pending* list view stay deterministic."
           (should (= 0.5 (pending-percent p)))
           (should (eq (pending-status p) :scheduled))
           ;; Cleanup: resolve so the registry empties.
-          (pending-resolve p "done"))))))
+          (pending-finish p "done"))))))
 
 
 ;;; Phase 2 — adopt mode and deadline timer
@@ -311,12 +311,12 @@ the placeholder lifecycle is otherwise normal."
             (should (equal (buffer-string) text-before))
             (should (eq (pending-status p) :scheduled))
             ;; The overlay covers exactly the adopted region.
-            (let ((ov (pending-overlay p)))
+            (let ((ov (pending-region p)))
               (should (overlayp ov))
               (should (= (overlay-start ov) s))
               (should (= (overlay-end ov) e)))
             ;; And resolve replaces only that range.
-            (pending-resolve p "ADOPTED")
+            (pending-finish p "ADOPTED")
             (should (equal (buffer-string) "Before:ADOPTED:After"))))))))
 
 (ert-deftest pending-test/deadline-rejects-timed-out ()
@@ -383,7 +383,7 @@ in a non-terminal state."
                  (p (pending-make buf :label "X"
                                   :on-resolve (lambda (_) (cl-incf calls)))))
             (pcase (car case)
-              ('resolve (pending-resolve p "ok"))
+              ('resolve (pending-finish p "ok"))
               ('reject  (pending-reject  p "bad"))
               ('cancel  (pending-cancel  p)))
             (should (= calls 1))
@@ -404,7 +404,7 @@ survive into the resolved text."
           (cl-letf (((symbol-function 'get-buffer-window)
                      (lambda (&rest _) t)))
             (pending--tick))
-          (let ((bs (overlay-get (pending-overlay p) 'before-string)))
+          (let ((bs (overlay-get (pending-region p) 'before-string)))
             (should (stringp bs))
             ;; Glyph + space.
             (should (= (length bs) 2))
@@ -412,8 +412,8 @@ survive into the resolved text."
           ;; Resolve clears the decoration on the (now-defunct) overlay's
           ;; before-string before the swap, so the resolved text in the
           ;; buffer contains no spinner.
-          (let ((ov (pending-overlay p)))
-            (pending-resolve p "DONE")
+          (let ((ov (pending-region p)))
+            (pending-finish p "DONE")
             (should (eq (pending-status p) :resolved))
             (when (overlayp ov)
               (should (null (overlay-get ov 'before-string))))
@@ -459,7 +459,7 @@ cancelled and `pending--global-timer' is nil."
           (should (timerp pending--global-timer))
           ;; Resolve empties the registry, which parks the timer in
           ;; `pending--unregister'.
-          (pending-resolve p "ok")
+          (pending-finish p "ok")
           (should (zerop (hash-table-count pending--registry)))
           (should (null pending--global-timer))
           ;; A redundant tick on an empty registry remains a no-op
@@ -484,7 +484,7 @@ visible again."
           (should (timerp pending--global-timer))
           (pending--tick)
           (should (null (pending-last-frame p)))
-          (should (null (overlay-get (pending-overlay p) 'before-string)))
+          (should (null (overlay-get (pending-region p) 'before-string)))
           ;; The struct is still registered; the timer just chose not
           ;; to draw it this tick.
           (should (= 1 (hash-table-count pending--registry)))
@@ -606,7 +606,7 @@ characters, not bytes."
           (cl-letf (((symbol-function 'get-buffer-window)
                      (lambda (&rest _) t)))
             (pending--tick))
-          (let ((after (overlay-get (pending-overlay p) 'after-string)))
+          (let ((after (overlay-get (pending-region p) 'after-string)))
             (should (stringp after))
             (should (string-match-p "30%" after))))))))
 
@@ -619,7 +619,7 @@ characters, not bytes."
           (cl-letf (((symbol-function 'get-buffer-window)
                      (lambda (&rest _) t)))
             (pending--tick))
-          (let ((after (overlay-get (pending-overlay p) 'after-string)))
+          (let ((after (overlay-get (pending-region p) 'after-string)))
             (should (stringp after))
             (should (string-match-p "~[0-9]+s" after))))))))
 
@@ -632,7 +632,7 @@ characters, not bytes."
           (cl-letf (((symbol-function 'get-buffer-window)
                      (lambda (&rest _) t)))
             (pending--tick))
-          (should (null (overlay-get (pending-overlay p) 'after-string))))))))
+          (should (null (overlay-get (pending-region p) 'after-string))))))))
 
 
 ;;; Phase 5 — edit-survival
@@ -647,7 +647,7 @@ The inserted label carries `read-only' text properties; calling
       (with-current-buffer buf
         (insert "Before:")
         (let ((p (pending-make buf :label "MIDDLE")))
-          (goto-char (1+ (overlay-start (pending-overlay p))))
+          (goto-char (1+ (overlay-start (pending-region p))))
           ;; Point now lies between two read-only characters of the
           ;; placeholder body — `insert' must signal `text-read-only'.
           (should-error (let ((inhibit-read-only nil))
@@ -668,7 +668,7 @@ Inserts at `(point-min)' and after the placeholder; both succeed."
           (insert "-Post")
           (should (string-match-p "Pre-Before:" (buffer-string)))
           (should (string-match-p "-Post" (buffer-string)))
-          (pending-resolve p "OK"))))))
+          (pending-finish p "OK"))))))
 
 (ert-deftest pending-test/front-sticky-blocks-at-start ()
   "Insertion at exactly `(overlay-start)' is blocked by `front-sticky'."
@@ -677,7 +677,7 @@ Inserts at `(point-min)' and after the placeholder; both succeed."
       (with-current-buffer buf
         (insert "Pre-")
         (let ((p (pending-make buf :label "MID")))
-          (goto-char (overlay-start (pending-overlay p)))
+          (goto-char (overlay-start (pending-region p)))
           (should-error (let ((inhibit-read-only nil)) (insert "X"))
                         :type 'text-read-only))))))
 
@@ -688,7 +688,7 @@ Inserts at `(point-min)' and after the placeholder; both succeed."
       (with-current-buffer buf
         (insert "Pre-")
         (let ((p (pending-make buf :label "MID")))
-          (goto-char (overlay-end (pending-overlay p)))
+          (goto-char (overlay-end (pending-region p)))
           (let ((inhibit-read-only nil))
             (insert "AFTER")
             (should (string-match-p "MIDAFTER" (buffer-string)))))))))
@@ -706,8 +706,8 @@ call `pending-cancel' with `:region-deleted'.  The user's
                (p (pending-make buf :label "MID"
                                 :on-cancel (lambda (_) (setq flag t)))))
           (insert "Y")
-          (let ((s (overlay-start (pending-overlay p)))
-                (e (overlay-end (pending-overlay p)))
+          (let ((s (overlay-start (pending-region p)))
+                (e (overlay-end (pending-region p)))
                 (inhibit-read-only t))
             (delete-region s e))
           (should (eq (pending-status p) :cancelled))
@@ -755,7 +755,7 @@ the normal way."
     (pending-test--with-buffer (buf "*p-resolved-edit*")
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve p "DONE")
+          (pending-finish p "DONE")
           (goto-char (point-min))
           (insert "POST-")
           (should (string-match-p "POST-DONE" (buffer-string))))))))
@@ -794,10 +794,10 @@ moment so subsequent inserts at its position advance the marker."
           (pending-finish-stream p)
           (should (eq (pending-status p) :resolved)))))))
 
-(ert-deftest pending-test/stream-then-resolve-replaces ()
-  "Calling `pending-resolve' mid-stream replaces the streamed content.
+(ert-deftest pending-test/stream-then-finish-replaces ()
+  "Calling `pending-finish' mid-stream replaces the streamed content.
 The streamed text is dropped; the buffer ends up with the
-replacement text from `pending-resolve' regardless of how many
+replacement text from `pending-finish' regardless of how many
 chunks had streamed in."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-replace*")
@@ -805,7 +805,7 @@ chunks had streamed in."
         (insert "Pre:")
         (let ((p (pending-make buf :label "X")))
           (pending-resolve-stream p "streamed-content")
-          (pending-resolve p "FINAL")
+          (pending-finish p "FINAL")
           (should (eq (pending-status p) :resolved))
           (should (string-match-p "Pre:FINAL" (buffer-string)))
           (should-not (string-match-p "streamed-content" (buffer-string))))))))
@@ -849,7 +849,7 @@ so the user gets the standard `text-read-only' rejection."
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
           (pending-resolve-stream p "abc")
-          (goto-char (1+ (overlay-start (pending-overlay p))))
+          (goto-char (1+ (overlay-start (pending-region p))))
           (should-error (let ((inhibit-read-only nil)) (insert "EVIL"))
                         :type 'text-read-only))))))
 
@@ -876,7 +876,7 @@ all come off."
 (ert-deftest pending-test/finish-stream-without-chunks ()
   "Finish-stream on a never-streamed placeholder behaves like resolve.
 With no chunks ever streamed the call delegates to
-`(pending-resolve p \"\")', so the buffer ends up with the
+`(pending-finish p \"\")', so the buffer ends up with the
 placeholder removed and replaced by the empty string."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-no-stream*")
@@ -937,7 +937,7 @@ string."
 
 (ert-deftest pending-test/process-resolved-before-exit ()
   "Resolving before the process exits leaves the sentinel a no-op.
-If the caller calls `pending-resolve' BEFORE the process exits,
+If the caller calls `pending-finish' BEFORE the process exits,
 the wrapper sentinel's `pending-reject' call hits the
 single-resolution guard and is suppressed; status stays
 `:resolved'."
@@ -948,7 +948,7 @@ single-resolution guard and is suppressed; status stays
                (p (pending-make buf :label "X"))
                (proc (start-process "p-test-resolved" nil "sleep" "0.1")))
           (pending-attach-process p proc)
-          (pending-resolve p "manual-resolve")
+          (pending-finish p "manual-resolve")
           ;; Wait for the process to exit; sentinel should be a no-op.
           (let ((deadline (+ (float-time) 5.0)))
             (while (and (process-live-p proc) (< (float-time) deadline))
@@ -1084,7 +1084,7 @@ strictly inside the overlay range."
     (pending-test--with-buffer (buf "*p-cap*")
       (with-current-buffer buf
         (let ((p (pending-make buf :label "MIDDLE")))
-          (goto-char (1+ (overlay-start (pending-overlay p))))
+          (goto-char (1+ (overlay-start (pending-region p))))
           (pending-cancel-at-point)
           (should (eq (pending-status p) :cancelled)))))))
 
@@ -1225,21 +1225,21 @@ the demo buffer so leftover timers cannot fire after the test ends."
 
 ;;; Phase 10 — simple positional API
 
-(ert-deftest pending-test/overlay-creates-token ()
-  "`pending-overlay' returns a usable token with start/end markers."
+(ert-deftest pending-test/region-creates-token ()
+  "`pending-region' returns a usable token with start/end markers."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-overlay*")
       (with-current-buffer buf
         (insert "Before-MID-After")
         (let* ((beg (+ (point-min) 7))
                (end (+ (point-min) 10))
-               (token (pending-overlay beg end "rewriting")))
+               (token (pending-region beg end "rewriting")))
           (should (pending-p token))
           (should (eq (pending-buffer token) buf))
           (should (= (marker-position (pending-start token)) beg))
           (should (= (marker-position (pending-end token)) end))
           (should (eq (pending-indicator token) :lighter))
-          (let ((bs (overlay-get (pending-overlay token) 'before-string)))
+          (let ((bs (overlay-get (pending-region token) 'before-string)))
             (should (stringp bs))
             (should (string-match-p "rewriting" bs))))))))
 
@@ -1253,31 +1253,31 @@ the demo buffer so leftover timers cannot fire after the test ends."
           (should (pending-p token))
           (should (= (marker-position (pending-start token))
                      (marker-position (pending-end token))))
-          (let ((bs (overlay-get (pending-overlay token) 'before-string)))
+          (let ((bs (overlay-get (pending-region token) 'before-string)))
             (should (string-match-p "calling LLM" bs))))))))
 
-(ert-deftest pending-test/resolve-replaces-region ()
-  "`pending-resolve' on an overlay TOKEN replaces [BEG, END] with STR."
+(ert-deftest pending-test/finish-replaces-region ()
+  "`pending-finish' on an overlay TOKEN replaces [BEG, END] with STR."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-resolve-region*")
       (with-current-buffer buf
         (insert "Before-OLD-After")
         (let* ((beg (+ (point-min) 7))
                (end (+ (point-min) 10))
-               (token (pending-overlay beg end "...")))
-          (pending-resolve token "NEW")
+               (token (pending-region beg end "...")))
+          (pending-finish token "NEW")
           (should (eq (pending-status token) :resolved))
           (should (string-match-p "Before-NEW-After" (buffer-string))))))))
 
-(ert-deftest pending-test/resolve-inserts-at-pos ()
-  "`pending-resolve' on an insert TOKEN (BEG=END) inserts STR at POS."
+(ert-deftest pending-test/finish-inserts-at-pos ()
+  "`pending-finish' on an insert TOKEN (BEG=END) inserts STR at POS."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-resolve-pos*")
       (with-current-buffer buf
         (insert "Hello world")
         (goto-char (1+ (point-min)))  ; between H and ello
         (let ((token (pending-insert (point) "...")))
-          (pending-resolve token "NEW")
+          (pending-finish token "NEW")
           (should (eq (pending-status token) :resolved))
           (should (string-match-p "HNEWello world" (buffer-string))))))))
 
@@ -1315,7 +1315,7 @@ the demo buffer so leftover timers cannot fire after the test ends."
           (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) t)))
             (pending--tick))
           (should (null (pending-last-frame token)))
-          (let ((bs (overlay-get (pending-overlay token) 'before-string)))
+          (let ((bs (overlay-get (pending-region token) 'before-string)))
             (should (string-match-p "static" bs))))))))
 
 
@@ -1332,14 +1332,14 @@ the demo buffer so leftover timers cannot fire after the test ends."
           (let ((overlay-face (overlay-get (pending-ov p) 'face)))
             (should-not overlay-face)))))))
 
-(ert-deftest pending-test/overlay-region-has-overlay-face ()
-  "`pending-overlay' adopt mode (non-empty region): overlay HAS a face,
+(ert-deftest pending-test/region-has-overlay-face ()
+  "`pending-region' adopt mode (non-empty region): overlay HAS a face,
 but the underlying buffer text does NOT carry a face text property."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-overlay-face*")
       (with-current-buffer buf
         (insert "Before-MID-After")
-        (let* ((tok (pending-overlay 8 11 "rewriting"))
+        (let* ((tok (pending-region 8 11 "rewriting"))
                (ov  (pending-ov tok)))
           (should (eq (overlay-get ov 'face) 'pending-highlight))
           ;; Underlying buffer text at position 8 has no face property.
@@ -1356,12 +1356,12 @@ but the underlying buffer text does NOT carry a face text property."
           (should-not (overlay-get ov 'face)))))))
 
 (ert-deftest pending-test/resolved-text-has-no-face ()
-  "After `pending-resolve', the inserted resolution text has no `face' property."
+  "After `pending-finish', the inserted resolution text has no `face' property."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-resolved-no-face*")
       (with-current-buffer buf
         (let ((p (pending-make buf :label "X")))
-          (pending-resolve p "DONE")
+          (pending-finish p "DONE")
           (should-not (get-text-property (point-min) 'face)))))))
 
 (ert-deftest pending-test/streamed-text-has-no-face ()

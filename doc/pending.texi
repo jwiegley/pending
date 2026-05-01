@@ -148,8 +148,8 @@ To install from a local checkout:
 @example
 (use-package pending
   :vc (:url "https://github.com/jwiegley/pending")
-  :commands (pending-make pending-overlay pending-insert
-             pending-resolve pending-cancel pending-list
+  :commands (pending-make pending-region pending-insert
+             pending-finish pending-cancel pending-list
              pending-demo)
   :config
   (global-pending-lighter-mode 1))
@@ -171,18 +171,18 @@ pending, then atomically replace it when the answer arrives.
 @section Mark a region for rewrite
 
 @example
-(let ((tok (pending-overlay (line-beginning-position)
-                            (line-end-position)
-                            "rewriting")))
+(let ((tok (pending-region (line-beginning-position)
+                           (line-end-position)
+                           "rewriting")))
   ;; @dots{} kick off async work @dots{}
-  (pending-resolve tok "the new text"))
+  (pending-finish tok "the new text"))
 @end example
 
 @section Mark a single point for insertion
 
 @example
 (let ((tok (pending-insert (point) "Calling Claude")))
-  (run-at-time 2 nil (lambda () (pending-resolve tok "Hello!"))))
+  (run-at-time 2 nil (lambda () (pending-finish tok "Hello!"))))
 @end example
 
 @section Cancel from point
@@ -190,7 +190,7 @@ pending, then atomically replace it when the answer arrives.
 Place the cursor on a placeholder and run @kbd{M-x
 pending-cancel-at-point}.  The placeholder's overlay also binds
 @kbd{RET} and @kbd{mouse-1} to the same command via
-@code{pending-overlay-map}, so a single @kbd{RET} on the highlighted
+@code{pending-region-map}, so a single @kbd{RET} on the highlighted
 region cancels the in-flight work.
 
 @section Show the lighter mode
@@ -214,7 +214,7 @@ placeholders are active.  Clicking the lighter opens
 
 Every constructor returns a @dfn{token} --- a @code{pending} struct
 used as a handle for the placeholder.  Pass the token to
-@code{pending-resolve}, @code{pending-cancel}, @code{pending-update},
+@code{pending-finish}, @code{pending-cancel}, @code{pending-update},
 and friends to operate on the placeholder.
 
 Tokens are valid until they reach a terminal state.  Operations on a
@@ -289,7 +289,7 @@ The library distinguishes two visual treatments:
 @table @strong
 @item Region highlight
 When the overlay covers existing buffer text (adopt mode
-@code{pending-overlay BEG END STR} with @code{BEG < END}), the
+@code{pending-region BEG END STR} with @code{BEG < END}), the
 overlay carries @code{pending-highlight} as its @code{face} property
 so the user can see @emph{which} characters the asynchronous change
 will rewrite.  In insert mode and zero-width adopt mode the overlay
@@ -381,13 +381,13 @@ exit.
 
 The simple positional API is the recommended starting point.  Each
 function returns a token; pass that token to
-@code{pending-resolve}/@code{pending-cancel} when ready.
+@code{pending-finish}/@code{pending-cancel} when ready.
 
-@deffn Function pending-overlay beg-or-token &optional end str
-@findex pending-overlay
+@deffn Function pending-region beg-or-token &optional end str
+@findex pending-region
 Two call shapes are supported.
 
-@strong{Constructor:} @code{(pending-overlay BEG END STR)}.  Mark the
+@strong{Constructor:} @code{(pending-region BEG END STR)}.  Mark the
 region @code{[BEG, END]} in the current buffer as pending an
 asynchronous change.  When @code{BEG < END}, the overlay covers
 existing buffer text and carries @code{pending-highlight} as its
@@ -397,18 +397,18 @@ untouched --- only the overlay carries a face).  STR shows as a
 lighter badge at BEG via the overlay's @code{before-string}, faced
 with @code{pending-lighter}.  If BEG equals END, the overlay carries
 no face; only the lighter shows.  Returns a TOKEN (a
-@code{pending} struct) usable with @code{pending-resolve},
+@code{pending} struct) usable with @code{pending-finish},
 @code{pending-cancel}, and @code{pending-goto}.
 
-@strong{Accessor:} @code{(pending-overlay TOKEN)}.  Back-compat
+@strong{Accessor:} @code{(pending-region TOKEN)}.  Back-compat
 accessor: return the live overlay object owned by TOKEN, or nil.
 Equivalent to @code{(pending-ov TOKEN)}.
 
 @example
-(let ((tok (pending-overlay (region-beginning) (region-end)
-                            "summarising")))
+(let ((tok (pending-region (region-beginning) (region-end)
+                           "summarising")))
   (gptel-request (buffer-substring (region-beginning) (region-end))
-   :callback (lambda (text _) (pending-resolve tok text))))
+   :callback (lambda (text _) (pending-finish tok text))))
 @end example
 @end deffn
 
@@ -417,15 +417,15 @@ Equivalent to @code{(pending-ov TOKEN)}.
 Mark POS as pending insertion of asynchronously-computed text.  Shows
 STR as a lighter badge at POS.  No region is highlighted (BEG = END).
 Returns a token.  When eventually resolved with text via
-@code{pending-resolve}, the text is inserted at POS.
+@code{pending-finish}, the text is inserted at POS.
 
 @example
 (pending-insert (point) "fetching weather")
 @end example
 @end deffn
 
-@deffn Function pending-resolve token text
-@findex pending-resolve
+@deffn Function pending-finish token text
+@findex pending-finish
 Atomically replace TOKEN's region with TEXT.  Transition to
 @code{:resolved}.  Returns t on success, nil if TOKEN was already in
 a terminal state.
@@ -438,7 +438,7 @@ cancels any deadline timer, and runs the @code{:on-resolve} callback
 once (errors there are caught and warned).
 
 @example
-(pending-resolve tok "Hello, world!")
+(pending-finish tok "Hello, world!")
 @end example
 @end deffn
 
@@ -499,7 +499,7 @@ This is a fresh list; mutating it does not affect the registry.
 @findex pending-cancel-at-point
 Cancel the pending placeholder at point.  Signals a @code{user-error}
 if no placeholder covers point.  Bound to @kbd{RET} and @kbd{mouse-1}
-over a placeholder by @code{pending-overlay-map}.
+over a placeholder by @code{pending-region-map}.
 @end deffn
 
 
@@ -647,7 +647,7 @@ deletes the overlay, unregisters P, and fires its @code{:on-resolve}
 callback.
 
 If P is @code{:scheduled} or @code{:running} (no chunks were ever
-streamed), behaves like @code{(pending-resolve P "")}.  If P is
+streamed), behaves like @code{(pending-finish P "")}.  If P is
 already terminal, a no-op with debug warning.
 
 @example
@@ -663,7 +663,7 @@ REPLACEMENT-TEXT defaults to a glyph plus the reason.  The inserted
 text is plain --- the library never adds a @code{face} property to
 text it inserts itself; surrounding font-lock applies normally.
 
-Side effects mirror @code{pending-resolve} (removes overlay, clears
+Side effects mirror @code{pending-finish} (removes overlay, clears
 markers, unregisters, cancels timer, runs @code{:on-resolve}).
 
 @example
@@ -837,7 +837,7 @@ commands, and URLs to taste.
      prompt
      :callback (lambda (response info)
                  (cond
-                  ((stringp response) (pending-resolve p response))
+                  ((stringp response) (pending-finish p response))
                   ((plist-get info :error)
                    (pending-reject p (plist-get info :error)))
                   (t (pending-cancel p)))))
@@ -887,7 +887,7 @@ commands, and URLs to taste.
         (t
          (goto-char (point-min))
          (re-search-forward "^$" nil t)
-         (pending-resolve p (buffer-substring (point) (point-max)))))))
+         (pending-finish p (buffer-substring (point) (point-max)))))))
     p))
 @end example
 
@@ -902,7 +902,7 @@ A useful template for tests and demos:
     (run-at-time seconds nil
                  (lambda ()
                    (when (pending-active-p p)
-                     (pending-resolve p text))))
+                     (pending-finish p text))))
     p))
 @end example
 
@@ -912,7 +912,7 @@ A useful template for tests and demos:
 (defun my/with-pending (label callback)
   "Show a pending placeholder labelled LABEL.
 CALLBACK is called with the token; it must arrange to call
-`pending-resolve' or `pending-reject' on the token."
+`pending-finish' or `pending-reject' on the token."
   (let ((p (pending-make (current-buffer)
                          :label label
                          :indicator :spinner)))
@@ -968,8 +968,8 @@ Auto-refresh is on the v0.2 roadmap.
 point.  The library installs an overlay keymap on every placeholder
 binding @kbd{RET} and @kbd{mouse-1} to the same command:
 
-@defvr Variable pending-overlay-map
-@vindex pending-overlay-map
+@defvr Variable pending-region-map
+@vindex pending-region-map
 Keymap installed on placeholder overlays.  Bound to @kbd{RET} and
 @kbd{mouse-1} for @code{pending-cancel-at-point}.
 @end defvr

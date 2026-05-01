@@ -30,7 +30,7 @@ Calling Claude  ⠋ [████████░░░░░░░░] 47%
   (gptel-request "Tell me a joke."
    :callback (lambda (response _info)
                (if (stringp response)
-                   (pending-resolve tok response)
+                   (pending-finish tok response)
                  (pending-cancel tok)))))
 ```
 
@@ -81,8 +81,8 @@ dependencies.
 ```elisp
 (use-package pending
   :vc (:url "https://github.com/jwiegley/pending")
-  :commands (pending-make pending-overlay pending-insert
-             pending-resolve pending-cancel pending-list
+  :commands (pending-make pending-region pending-insert
+             pending-finish pending-cancel pending-list
              pending-demo)
   :config
   (global-pending-lighter-mode 1))
@@ -98,11 +98,11 @@ Drop `pending.el` somewhere on `load-path` and `(require 'pending)`.
 
 ```elisp
 ;; Mark the current line as being rewritten asynchronously.
-(let ((tok (pending-overlay (line-beginning-position)
-                            (line-end-position)
-                            "rewriting")))
+(let ((tok (pending-region (line-beginning-position)
+                           (line-end-position)
+                           "rewriting")))
   ;; ... do work ...
-  (pending-resolve tok "the new text"))
+  (pending-finish tok "the new text"))
 ```
 
 ### Mark a single point for insertion
@@ -110,7 +110,7 @@ Drop `pending.el` somewhere on `load-path` and `(require 'pending)`.
 ```elisp
 ;; Insert at point when the answer arrives.
 (let ((tok (pending-insert (point) "Calling Claude")))
-  (run-at-time 2 nil (lambda () (pending-resolve tok "Hello!"))))
+  (run-at-time 2 nil (lambda () (pending-finish tok "Hello!"))))
 ```
 
 ### Cancel from point
@@ -132,7 +132,7 @@ are active. Click it to open `M-x pending-list`.
 ### Tokens
 
 Every constructor returns a *token* — a `pending` struct used as a
-handle. Pass it to `pending-resolve`, `pending-cancel`,
+handle. Pass it to `pending-finish`, `pending-cancel`,
 `pending-update`, and friends. Tokens are valid until they hit a
 terminal state (`:resolved`, `:rejected`, `:cancelled`, `:expired`);
 after that, all operations are no-ops (with a `:debug` warning, so
@@ -150,7 +150,7 @@ registry also feeds `M-x pending-list` and the mode-line lighter.
 There are two visual treatments, and I keep them distinct:
 
 - **Region highlight** — when the overlay covers existing buffer
-  text (adopt mode `pending-overlay BEG END STR` with `BEG < END`),
+  text (adopt mode `pending-region BEG END STR` with `BEG < END`),
   the overlay carries `pending-highlight` as its `face`. That's so
   the user can see *which* characters the async work will rewrite.
   In insert mode and zero-width adopt mode, the overlay has no face
@@ -208,11 +208,11 @@ can't strand state:
 
 ## The simple API
 
-### `pending-overlay BEG END STR`
+### `pending-region BEG END STR`
 
 ```elisp
-(pending-overlay BEG END STR)  ; constructor
-(pending-overlay TOKEN)        ; back-compat accessor
+(pending-region BEG END STR)  ; constructor
+(pending-region TOKEN)        ; back-compat accessor
 ```
 
 Mark the region `[BEG, END]` in the current buffer as pending an
@@ -228,10 +228,10 @@ carries no face. The 1-arg form returns the token's overlay
 (back-compat with the auto-generated accessor name).
 
 ```elisp
-(let ((tok (pending-overlay (region-beginning) (region-end)
-                            "summarising")))
+(let ((tok (pending-region (region-beginning) (region-end)
+                           "summarising")))
   (gptel-request (buffer-substring (region-beginning) (region-end))
-   :callback (lambda (text _) (pending-resolve tok text))))
+   :callback (lambda (text _) (pending-finish tok text))))
 ```
 
 ### `pending-insert POS STR`
@@ -248,14 +248,14 @@ resolved, the text is inserted at `POS`.
 (pending-insert (point) "fetching weather")
 ```
 
-### `pending-resolve TOKEN TEXT`
+### `pending-finish TOKEN TEXT`
 
 Atomically replace `TOKEN`'s region with `TEXT`. Transition to
 `:resolved`. Returns t on success, nil if `TOKEN` was already in a
 terminal state.
 
 ```elisp
-(pending-resolve tok "Hello, world!")
+(pending-finish tok "Hello, world!")
 ```
 
 ### `pending-cancel TOKEN &optional REASON`
@@ -302,7 +302,7 @@ Useful for programmatic queries.
 ### `pending-cancel-at-point`
 
 Interactive. Cancel the placeholder under point. Bound to `RET` and
-`mouse-1` over a placeholder by `pending-overlay-map`.
+`mouse-1` over a placeholder by `pending-region-map`.
 
 ## The rich API
 
@@ -387,7 +387,7 @@ already holds the streamed content).
 ```
 
 If `P` never received a chunk (status is `:scheduled` or
-`:running`), this is equivalent to `(pending-resolve P "")`.
+`:running`), this is equivalent to `(pending-finish P "")`.
 
 ### `pending-reject P REASON &optional REPLACEMENT-TEXT`
 
@@ -491,7 +491,7 @@ this one to never hit 100% until it actually finishes.
      prompt
      :callback (lambda (response info)
                  (cond
-                  ((stringp response) (pending-resolve p response))
+                  ((stringp response) (pending-finish p response))
                   ((plist-get info :error)
                    (pending-reject p (plist-get info :error)))
                   (t (pending-cancel p)))))
@@ -539,7 +539,7 @@ this one to never hit 100% until it actually finishes.
         (t
          (goto-char (point-min))
          (re-search-forward "^$" nil t)
-         (pending-resolve p (buffer-substring (point) (point-max)))))))
+         (pending-finish p (buffer-substring (point) (point-max)))))))
     p))
 ```
 
@@ -552,7 +552,7 @@ this one to never hit 100% until it actually finishes.
     (run-at-time seconds nil
                  (lambda ()
                    (when (pending-active-p p)
-                     (pending-resolve p text))))
+                     (pending-finish p text))))
     p))
 ```
 
@@ -562,7 +562,7 @@ this one to never hit 100% until it actually finishes.
 (defun my/with-pending (label callback)
   "Show a pending placeholder labelled LABEL.
 CALLBACK is called with the token; it must arrange to call
-`pending-resolve' or `pending-reject' on the token."
+`pending-finish' or `pending-reject' on the token."
   (let ((p (pending-make (current-buffer)
                          :label label
                          :indicator :spinner)))
