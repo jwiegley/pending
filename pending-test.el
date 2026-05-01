@@ -1225,6 +1225,102 @@ the demo buffer so leftover timers cannot fire after the test ends."
       (kill-buffer "*pending-demo*"))))
 
 
+;;; Phase 10 — simple positional API
+
+(ert-deftest pending-test/overlay-creates-token ()
+  "`pending-overlay' returns a usable token with start/end markers."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-overlay*")
+     (with-current-buffer buf
+       (insert "Before-MID-After")
+       (let* ((beg (+ (point-min) 7))
+              (end (+ (point-min) 10))
+              (token (pending-overlay beg end "rewriting")))
+         (should (pending-p token))
+         (should (eq (pending-buffer token) buf))
+         (should (= (marker-position (pending-start token)) beg))
+         (should (= (marker-position (pending-end token)) end))
+         (should (eq (pending-indicator token) :lighter))
+         (let ((bs (overlay-get (pending-overlay token) 'before-string)))
+           (should (stringp bs))
+           (should (string-match-p "rewriting" bs))))))))
+
+(ert-deftest pending-test/insert-creates-zero-width ()
+  "`pending-insert' creates a zero-width placeholder at POS."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-insert*")
+     (with-current-buffer buf
+       (insert "Hello world")
+       (let ((token (pending-insert (point) "calling LLM")))
+         (should (pending-p token))
+         (should (= (marker-position (pending-start token))
+                    (marker-position (pending-end token))))
+         (let ((bs (overlay-get (pending-overlay token) 'before-string)))
+           (should (string-match-p "calling LLM" bs))))))))
+
+(ert-deftest pending-test/resolve-replaces-region ()
+  "`pending-resolve' on an overlay TOKEN replaces [BEG, END] with STR."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-resolve-region*")
+     (with-current-buffer buf
+       (insert "Before-OLD-After")
+       (let* ((beg (+ (point-min) 7))
+              (end (+ (point-min) 10))
+              (token (pending-overlay beg end "...")))
+         (pending-resolve token "NEW")
+         (should (eq (pending-status token) :resolved))
+         (should (string-match-p "Before-NEW-After" (buffer-string))))))))
+
+(ert-deftest pending-test/resolve-inserts-at-pos ()
+  "`pending-resolve' on an insert TOKEN (BEG=END) inserts STR at POS."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-resolve-pos*")
+     (with-current-buffer buf
+       (insert "Hello world")
+       (goto-char (1+ (point-min)))  ; between H and ello
+       (let ((token (pending-insert (point) "...")))
+         (pending-resolve token "NEW")
+         (should (eq (pending-status token) :resolved))
+         (should (string-match-p "HNEWello world" (buffer-string))))))))
+
+(ert-deftest pending-test/goto-jumps-to-start ()
+  "`pending-goto' moves point to TOKEN's start position."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-goto*")
+     (with-current-buffer buf
+       (insert "Some content here xyz")
+       (let* ((target-pos (+ (point-min) 5))
+              (token (pending-insert target-pos "...")))
+         (goto-char (point-min))
+         (pending-goto token)
+         (should (= (point) target-pos))
+         (should (eq (current-buffer) buf)))))))
+
+(ert-deftest pending-test/alist-snapshot ()
+  "`pending-alist' returns (ID . STRUCT) entries for active placeholders."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-alist*")
+     (with-current-buffer buf
+       (let ((t1 (pending-insert (point-min) "A"))
+             (t2 (pending-insert (point-min) "B")))
+         (let ((alist (pending-alist)))
+           (should (= 2 (length alist)))
+           (should (member (cons (pending-id t1) t1) alist))
+           (should (member (cons (pending-id t2) t2) alist))))))))
+
+(ert-deftest pending-test/lighter-mode-no-spinner-anim ()
+  "`:lighter' indicator does not advance the spinner frame index."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-lighter-anim*")
+     (with-current-buffer buf
+       (let ((token (pending-insert (point-min) "static")))
+         (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) t)))
+           (pending--tick))
+         (should (null (pending-last-frame token)))
+         (let ((bs (overlay-get (pending-overlay token) 'before-string)))
+           (should (string-match-p "static" bs))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

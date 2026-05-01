@@ -17,6 +17,40 @@ Use cases:
 - Network fetches via `url-retrieve`.
 - Arbitrary callback-driven async work.
 
+## Quick start
+
+The simple positional API covers the most common case: mark a region
+or point as pending, then atomically replace it when the answer
+arrives.
+
+```elisp
+;; Mark a region as being rewritten asynchronously.
+(let ((tok (pending-overlay (point) (line-end-position) "rewriting")))
+  ;; ... kick off async work ...
+  (pending-resolve tok "the new text"))   ; replaces the region
+
+;; Mark a single point as a forthcoming insertion.
+(let ((tok (pending-insert (point) "calling Claude")))
+  (gptel-request "..."
+   :callback (lambda (response _)
+               (pending-resolve tok response))))
+```
+
+The TOKEN returned by `pending-overlay` and `pending-insert` is a
+`pending` struct.  Use it with:
+
+- `pending-resolve TOKEN STR` — replace the region (or insert at
+  point if BEG = END) with STR.
+- `pending-cancel TOKEN` — cancel without inserting anything.
+- `pending-goto TOKEN` — jump to TOKEN's start position.
+- `pending-alist` — snapshot of all active tokens.
+- `M-x pending-list` — interactive tabulated buffer; the mode-line
+  lighter is also clickable (`mouse-1` opens it).
+
+The full keyword API (`pending-make`) supports streaming, ETA bars,
+deadlines, and process attachment — see the next section and
+`DESIGN.md`.
+
 ## Why not `org-pending`?
 
 Bruno Barbier's [`org-pending`][1] is a closely related upstream Org
@@ -59,7 +93,11 @@ Full surface in `DESIGN.md` §3.
 
 | Symbol                          | Kind     | Purpose                                                         |
 |---------------------------------|----------|-----------------------------------------------------------------|
-| `pending-make`                  | function | Insert a placeholder; return a `pending' struct                 |
+| `pending-overlay`               | function | Simple: mark `[BEG, END]` pending with badge STR; return token  |
+| `pending-insert`                | function | Simple: mark POS pending with badge STR; return token           |
+| `pending-goto`                  | command  | Jump to a token's start position (interactive picker)           |
+| `pending-alist`                 | function | Snapshot `(ID . STRUCT)` of all active placeholders             |
+| `pending-make`                  | function | Power: insert a placeholder with full keyword surface           |
 | `pending-resolve`               | function | Atomically replace the region with text; transition `:resolved` |
 | `pending-resolve-stream`        | function | Append a streamed chunk; transition `:streaming` on first call  |
 | `pending-finish-stream`         | function | Close out a stream; transition `:resolved`                      |

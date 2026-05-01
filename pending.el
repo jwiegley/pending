@@ -989,6 +989,14 @@ position falls outside BUFFER's bounds."
       ;; command's name.  See `pending-overlay-map'.
       (overlay-put ov 'keymap pending-overlay-map)
       (pending--register p)
+      ;; For `:lighter' (static badge) mode, render once now so the
+      ;; lighter is visible without waiting for the animation timer.
+      ;; The timer's visibility gate would otherwise delay rendering
+      ;; until the buffer is shown, which is wrong for a static badge
+      ;; that callers expect to see immediately on construction.
+      (when (eq resolved-indicator :lighter)
+        (with-demoted-errors "pending--render initial lighter: %S"
+          (pending--render p)))
       ;; Wake the global animation timer; safe no-op if it is already
       ;; running.  See `pending--ensure-timer' and DESIGN.md §4 for the
       ;; single-timer rationale.
@@ -1697,6 +1705,12 @@ column.  Bindings: `g' refresh, `RET' jump to placeholder, `c' cancel,
 
 ;;; Mode-line lighter
 
+(defvar pending--mode-line-keymap
+  (let ((m (make-sparse-keymap)))
+    (define-key m [mode-line mouse-1] #'pending-list)
+    m)
+  "Keymap on the mode-line lighter; `mouse-1' opens `pending-list'.")
+
 (defun pending-mode-line-string ()
   "Return a propertized mode-line string summarising active pendings.
 Format: `\" [3⏳~5s]\"' — count of active placeholders followed by the
@@ -1705,8 +1719,10 @@ placeholder has an ETA in the future, the trailing tilde-segment is
 omitted.  Returns nil when there are no active placeholders so the
 mode-line construct disappears entirely.
 
-The returned string is propertized with `pending-spinner-face' and
-carries a `help-echo' tooltip describing the count."
+The returned string is propertized with `pending-spinner-face',
+carries a `help-echo' tooltip describing the count, and binds
+`mouse-1' to `pending-list' so clicking the lighter opens the
+*Pending* list buffer."
   (let* ((actives (pending-list-active))
          (count (length actives)))
     (when (> count 0)
@@ -1727,9 +1743,12 @@ carries a `help-echo' tooltip describing the count."
              (text (format " [%d⏳%s]" count eta-text)))
         (propertize text
                     'face 'pending-spinner-face
+                    'mouse-face 'mode-line-highlight
+                    'local-map pending--mode-line-keymap
                     'help-echo
-                    (format "%d active pending placeholder%s"
-                            count (if (= count 1) "" "s")))))))
+                    (format
+                     "%d active pending placeholder%s\nmouse-1: list"
+                     count (if (= count 1) "" "s")))))))
 
 (defvar pending--mode-line-construct '(:eval (pending-mode-line-string))
   "Mode-line construct used by `global-pending-lighter-mode'.
