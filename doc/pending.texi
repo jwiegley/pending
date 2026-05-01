@@ -794,6 +794,18 @@ Spinner styles ship with: @code{dots-1}, @code{dots-2}, @code{line},
              '(my-style . ["a" "b" "c"]))
 @end example
 
+@cindex SVG spinner
+@cindex graphical spinner
+On graphical frames where SVG is compiled into Emacs, the spinner
+glyph is rendered as a small rotating SVG arc via @code{svg.el}.
+This is enabled by default through @code{pending-svg-spinner-enable}
+and gated on @code{display-graphic-p} plus
+@code{(image-type-available-p 'svg)}.  Generated images are cached
+on @code{(face style frame-index size)} tuples; changing
+@code{pending-svg-spinner-size} clears the cache via the
+@code{defcustom}'s @code{:set} hook.  TTYs and SVG-less Emacs
+builds fall back automatically to the Unicode text glyph.
+
 
 @node Integrations
 @chapter Integrations
@@ -955,12 +967,52 @@ Pop to the placeholder's buffer.
 @item c
 @findex pending-list-cancel
 Cancel; reason @code{:cancelled-from-list}.
+@item ?
+@findex pending-list-describe
+Open the @code{*Pending: ID*} description buffer for the row.
 @item q
 Bury the buffer.
 @end table
 
-The list does not auto-refresh in v0.1; press @kbd{g} to update.
-Auto-refresh is on the v0.2 roadmap.
+The list auto-refreshes when the registry mutates (controlled by
+@code{pending-list-auto-refresh}); pressing @kbd{g} is still
+available for explicit refresh.
+
+@section Describing a single placeholder
+@cindex describe
+@cindex pending-describe
+@cindex description buffer
+
+@deffn Command pending-describe token
+@findex pending-describe
+Pop up a @code{*Pending: ID*} buffer in
+@code{pending-description-mode} showing structured details about
+TOKEN: token id, label, status, reason, owner buffer, group,
+indicator type and per-mode state (eta / percent / deadline /
+spinner-style), schedule and resolve timestamps, elapsed
+wall-clock seconds, callback wiring (yes/no for on-cancel and
+on-resolve), and any attached process.  Modeled on
+@code{org-pending}'s @code{org-pending-describe-reglock}.
+Interactively, prompts with @code{completing-read} over the
+registered placeholders.
+@end deffn
+
+Bindings inside the description buffer:
+
+@table @kbd
+@item g
+@findex pending-describe-refresh
+Re-render from the live token slots.
+@item RET
+@findex pending-describe-jump
+Pop to the placeholder's buffer (delegates to
+@code{pending-goto}).
+@item c
+@findex pending-describe-cancel
+Cancel; reason @code{:cancelled-from-describe}.
+@item q
+Bury the buffer.
+@end table
 
 @section Cancel from point
 
@@ -1083,6 +1135,21 @@ active.  Implemented via @code{pending--kill-emacs-query}, which is
 registered on @code{kill-emacs-query-functions} at load time.  When
 nil (the default) the query function returns t unconditionally and
 the exit is not blocked.
+@end defopt
+
+@defopt pending-svg-spinner-enable
+If non-nil (the default), render spinners as SVG images on
+graphical frames that have SVG image support.  Gated on
+@code{display-graphic-p} plus @code{(image-type-available-p 'svg)};
+falls back to the Unicode text glyph automatically on TTY or when
+SVG is unavailable.  Set to nil to force the text glyph everywhere.
+@end defopt
+
+@defopt pending-svg-spinner-size
+Pixel size of the SVG spinner image (square width and height).
+Default 16.  Changing this clears the SVG cache via the
+defcustom's @code{:set} hook so the next render regenerates
+images at the new size.
 @end defopt
 
 @section Faces

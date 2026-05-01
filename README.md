@@ -456,6 +456,15 @@ reaches) 100% past the deadline. That's deliberate — I find the
 "100% but still working" effect actively annoying, so I designed
 this one to never hit 100% until it actually finishes.
 
+On graphical frames where SVG is compiled into Emacs (the common
+case), the spinner glyph is rendered as a small rotating SVG arc
+via `svg.el`. This is enabled by default through
+`pending-svg-spinner-enable` and gated on `(display-graphic-p)`
+plus `(image-type-available-p 'svg)`; the cache key is `(face
+style frame-index size)` and is cleared when
+`pending-svg-spinner-size` changes. TTYs and SVG-less builds
+fall back automatically to the Unicode text glyph.
+
 ## Integration recipes
 
 ### gptel — streaming response
@@ -614,10 +623,32 @@ Bindings:
 | `g`   | `pending-list-refresh`   | Re-read the registry.                    |
 | `RET` | `pending-list-jump`      | Pop to the placeholder's buffer.         |
 | `c`   | `pending-list-cancel`    | Cancel; reason `:cancelled-from-list`.   |
+| `?`   | `pending-list-describe`  | Open `*Pending: ID*` description buffer. |
 | `q`   | `quit-window`            | Bury the buffer.                         |
 
-The list doesn't auto-refresh in v0.1; press `g` to update.
-Auto-refresh is on the v0.2 list.
+The list auto-refreshes when the registry mutates (controlled by
+`pending-list-auto-refresh`); pressing `g` is still available for
+explicit refresh.
+
+## Describing a single placeholder
+
+`M-x pending-describe` (or `?` from the `*Pending*` list)
+opens a `*Pending: ID*` buffer in `pending-description-mode`
+showing structured details about one placeholder: token id,
+label, status, reason, owner buffer, group, indicator type and
+per-mode state (eta / percent / deadline / spinner-style),
+schedule and resolve timestamps, elapsed wall-clock seconds,
+on-cancel and on-resolve callback wiring, and any attached
+process. Modeled on `org-pending`'s `org-pending-describe-reglock`.
+
+Bindings inside the description buffer:
+
+| Key   | Command                     | Effect                                       |
+|-------|-----------------------------|----------------------------------------------|
+| `g`   | `pending-describe-refresh`  | Re-render from the live token slots.         |
+| `RET` | `pending-describe-jump`     | Pop to the placeholder's buffer.             |
+| `c`   | `pending-describe-cancel`   | Cancel; reason `:cancelled-from-describe`.   |
+| `q`   | `quit-window`               | Bury the buffer.                             |
 
 ## Customization
 
@@ -632,6 +663,8 @@ Auto-refresh is on the v0.2 list.
 | `pending-allow-read-only`         | `nil`        | When non-nil, placeholders may be placed in read-only buffers.          |
 | `pending-label-max-width`         | `60`         | Maximum visible label width; longer labels are truncated.               |
 | `pending-confirm-on-emacs-exit`   | `nil`        | When non-nil, prompt before exit while placeholders are active.         |
+| `pending-svg-spinner-enable`      | `t`          | On graphical frames with SVG support, render the spinner as an SVG.    |
+| `pending-svg-spinner-size`        | `16`         | Pixel size of the SVG spinner image (square).                          |
 
 Spinner styles ship with: `dots-1`, `dots-2`, `line`, `arc`,
 `clock`. Add your own:
@@ -744,10 +777,6 @@ out of the box, prefer this one.
   assume a monospaced cell width. Under variable-pitch buffer
   faces, the bar may look ragged. Set `pending-bar-family` to a
   fixed-pitch family to compensate.
-- **No SVG spinner in v0.1.** Spinners are text glyphs only. SVG
-  spinners (and a fringe-bitmap indicator) are on the v0.2 list.
-- **Manual refresh of `*Pending*` list.** Press `g` to update; the
-  list doesn't auto-refresh on registry mutation in v0.1.
 - **Single-buffer scope.** A placeholder's overlay and read-only
   text properties live in one buffer. There's no projection across
   indirect buffers in v0.1; `org-pending`-style indirect-buffer
@@ -757,15 +786,20 @@ out of the box, prefer this one.
   Coordinate multiple related placeholders via the `:group`
   keyword and `pending-list-active`.
 
-## Roadmap (v0.2)
+## Roadmap (v0.2 and beyond)
+
+Landed in v0.2:
 
 - Auto-refresh of `*Pending*` on registry mutation.
 - Pulse-on-resolve flash via `pulse.el`.
-- `pending-as-promise` adapter for `aio` users.
-- SVG spinner for graphical frames.
 - Fringe bitmap indicator beside the placeholder.
+- SVG spinner for graphical frames.
 - `*Region Lock*`-style description buffer for a single
-  placeholder.
+  placeholder (`pending-describe`).
+
+Still on the roadmap:
+
+- `pending-as-promise` adapter for `aio` users.
 - Indirect-buffer projection of read-only properties.
 
 ## Development

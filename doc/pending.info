@@ -653,6 +653,15 @@ Add your own:
      (add-to-list 'pending-spinner-styles
                   '(my-style . ["a" "b" "c"]))
 
+   On graphical frames where SVG is compiled into Emacs, the spinner
+glyph is rendered as a small rotating SVG arc via ‘svg.el’.  This is
+enabled by default through ‘pending-svg-spinner-enable’ and gated on
+‘display-graphic-p’ plus ‘(image-type-available-p 'svg)’.  Generated
+images are cached on ‘(face style frame-index size)’ tuples; changing
+‘pending-svg-spinner-size’ clears the cache via the ‘defcustom’'s ‘:set’
+hook.  TTYs and SVG-less Emacs builds fall back automatically to the
+Unicode text glyph.
+
 
 File: pending.info,  Node: Integrations,  Next: Interactive UI,  Prev: Indicator modes,  Up: Top
 
@@ -800,13 +809,40 @@ Group       10        The placeholder's group symbol, or ‘-’.
      Pop to the placeholder's buffer.
 ‘c’
      Cancel; reason ‘:cancelled-from-list’.
+‘?’
+     Open the ‘*Pending: ID*’ description buffer for the row.
 ‘q’
      Bury the buffer.
 
-   The list does not auto-refresh in v0.1; press ‘g’ to update.
-Auto-refresh is on the v0.2 roadmap.
+   The list auto-refreshes when the registry mutates (controlled by
+‘pending-list-auto-refresh’); pressing ‘g’ is still available for
+explicit refresh.
 
-9.2 Cancel from point
+9.2 Describing a single placeholder
+===================================
+
+ -- Command: pending-describe token
+     Pop up a ‘*Pending: ID*’ buffer in ‘pending-description-mode’
+     showing structured details about TOKEN: token id, label, status,
+     reason, owner buffer, group, indicator type and per-mode state (eta
+     / percent / deadline / spinner-style), schedule and resolve
+     timestamps, elapsed wall-clock seconds, callback wiring (yes/no for
+     on-cancel and on-resolve), and any attached process.  Modeled on
+     ‘org-pending’'s ‘org-pending-describe-reglock’.  Interactively,
+     prompts with ‘completing-read’ over the registered placeholders.
+
+   Bindings inside the description buffer:
+
+‘g’
+     Re-render from the live token slots.
+‘RET’
+     Pop to the placeholder's buffer (delegates to ‘pending-goto’).
+‘c’
+     Cancel; reason ‘:cancelled-from-describe’.
+‘q’
+     Bury the buffer.
+
+9.3 Cancel from point
 =====================
 
 ‘M-x pending-cancel-at-point’ cancels the placeholder under point.  The
@@ -817,7 +853,7 @@ and ‘mouse-1’ to the same command:
      Keymap installed on placeholder overlays.  Bound to ‘RET’ and
      ‘mouse-1’ for ‘pending-cancel-at-point’.
 
-9.3 The demo
+9.4 The demo
 ============
 
  -- Command: pending-demo
@@ -913,6 +949,18 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      registered on ‘kill-emacs-query-functions’ at load time.  When nil
      (the default) the query function returns t unconditionally and the
      exit is not blocked.
+
+ -- User Option: pending-svg-spinner-enable
+     If non-nil (the default), render spinners as SVG images on
+     graphical frames that have SVG image support.  Gated on
+     ‘display-graphic-p’ plus ‘(image-type-available-p 'svg)’; falls
+     back to the Unicode text glyph automatically on TTY or when SVG is
+     unavailable.  Set to nil to force the text glyph everywhere.
+
+ -- User Option: pending-svg-spinner-size
+     Pixel size of the SVG spinner image (square width and height).
+     Default 16.  Changing this clears the SVG cache via the defcustom's
+     ‘:set’ hook so the next render regenerates images at the new size.
 
 11.2 Faces
 ==========
@@ -1205,16 +1253,19 @@ Index
 * comparison:                            Comparison.          (line   6)
 * concepts:                              Concepts.            (line   5)
 * customization:                         Customization.       (line   5)
-* demo:                                  Interactive UI.      (line  50)
+* demo:                                  Interactive UI.      (line  77)
+* describe:                              Interactive UI.      (line  42)
+* description buffer:                    Interactive UI.      (line  42)
 * development:                           Development.         (line   6)
 * edit-survival:                         Concepts.            (line 101)
 * errors:                                Hooks and callbacks. (line  58)
 * ETA:                                   Indicator modes.     (line   6)
-* faces:                                 Customization.       (line  66)
+* faces:                                 Customization.       (line  78)
 * global-pending-lighter-mode:           Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <1>:       Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <2>:       Mode-line lighter.   (line   7)
 * gptel:                                 Integrations.        (line  12)
+* graphical spinner:                     Indicator modes.     (line  40)
 * highlight:                             Concepts.            (line  72)
 * hooks:                                 Hooks and callbacks. (line   6)
 * indicator:                             Indicator modes.     (line   6)
@@ -1250,34 +1301,41 @@ Index
 * pending-cancel <1>:                    Simple API.          (line  57)
 * pending-cancel-at-point:               Simple API.          (line  95)
 * pending-cancel-at-point <1>:           Simple API.          (line  96)
-* pending-cancelled-face:                Customization.       (line 103)
-* pending-cancelled-face <1>:            Customization.       (line 104)
+* pending-cancelled-face:                Customization.       (line 115)
+* pending-cancelled-face <1>:            Customization.       (line 116)
 * pending-confirm-on-emacs-exit:         Customization.       (line  56)
 * pending-default-spinner-style:         Customization.       (line  20)
-* pending-demo:                          Interactive UI.      (line  50)
-* pending-demo <1>:                      Interactive UI.      (line  51)
+* pending-demo:                          Interactive UI.      (line  77)
+* pending-demo <1>:                      Interactive UI.      (line  78)
+* pending-describe:                      Interactive UI.      (line  42)
+* pending-describe <1>:                  Interactive UI.      (line  42)
+* pending-describe <2>:                  Interactive UI.      (line  43)
+* pending-describe-cancel:               Interactive UI.      (line  59)
+* pending-describe-jump:                 Interactive UI.      (line  57)
+* pending-describe-refresh:              Interactive UI.      (line  55)
 * pending-error:                         Hooks and callbacks. (line  58)
-* pending-error-face:                    Customization.       (line  98)
-* pending-error-face <1>:                Customization.       (line  99)
-* pending-face:                          Customization.       (line  84)
-* pending-face <1>:                      Customization.       (line  85)
+* pending-error-face:                    Customization.       (line 110)
+* pending-error-face <1>:                Customization.       (line 111)
+* pending-face:                          Customization.       (line  96)
+* pending-face <1>:                      Customization.       (line  97)
 * pending-finish:                        Simple API.          (line  42)
 * pending-finish <1>:                    Simple API.          (line  43)
 * pending-fps:                           Customization.       (line   9)
 * pending-goto:                          Simple API.          (line  72)
 * pending-goto <1>:                      Simple API.          (line  73)
-* pending-highlight:                     Customization.       (line  73)
-* pending-highlight <1>:                 Customization.       (line  74)
+* pending-highlight:                     Customization.       (line  85)
+* pending-highlight <1>:                 Customization.       (line  86)
 * pending-insert:                        Simple API.          (line  34)
 * pending-insert <1>:                    Simple API.          (line  35)
 * pending-label-max-width:               Customization.       (line  50)
-* pending-lighter:                       Customization.       (line  79)
-* pending-lighter <1>:                   Customization.       (line  80)
+* pending-lighter:                       Customization.       (line  91)
+* pending-lighter <1>:                   Customization.       (line  92)
 * pending-list:                          Simple API.          (line  82)
 * pending-list <1>:                      Simple API.          (line  83)
 * pending-list-active:                   Rich API.            (line 185)
 * pending-list-active <1>:               Rich API.            (line 186)
 * pending-list-cancel:                   Interactive UI.      (line  29)
+* pending-list-describe:                 Interactive UI.      (line  31)
 * pending-list-jump:                     Interactive UI.      (line  27)
 * pending-list-refresh:                  Interactive UI.      (line  25)
 * pending-make:                          Rich API.            (line   9)
@@ -1285,16 +1343,16 @@ Index
 * pending-make <2>:                      Rich API.            (line   6)
 * pending-mode-line-string:              Mode-line lighter.   (line  20)
 * pending-mode-line-string <1>:          Mode-line lighter.   (line  21)
-* pending-progress-face:                 Customization.       (line  93)
-* pending-progress-face <1>:             Customization.       (line  94)
+* pending-progress-face:                 Customization.       (line 105)
+* pending-progress-face <1>:             Customization.       (line 106)
 * pending-region:                        Simple API.          (line  10)
 * pending-region <1>:                    Simple API.          (line  11)
-* pending-region-map:                    Interactive UI.      (line  43)
-* pending-region-map <1>:                Interactive UI.      (line  44)
+* pending-region-map:                    Interactive UI.      (line  70)
+* pending-region-map <1>:                Interactive UI.      (line  71)
 * pending-reject:                        Rich API.            (line 123)
 * pending-reject <1>:                    Rich API.            (line 124)
-* pending-spinner-face:                  Customization.       (line  90)
-* pending-spinner-face <1>:              Customization.       (line  91)
+* pending-spinner-face:                  Customization.       (line 102)
+* pending-spinner-face <1>:              Customization.       (line 103)
 * pending-spinner-styles:                Customization.       (line  25)
 * pending-status:                        Rich API.            (line 177)
 * pending-status <1>:                    Rich API.            (line 178)
@@ -1302,6 +1360,8 @@ Index
 * pending-stream-finish <1>:             Rich API.            (line 111)
 * pending-stream-insert:                 Rich API.            (line  84)
 * pending-stream-insert <1>:             Rich API.            (line  85)
+* pending-svg-spinner-enable:            Customization.       (line  63)
+* pending-svg-spinner-size:              Customization.       (line  70)
 * pending-update:                        Rich API.            (line  72)
 * pending-update <1>:                    Rich API.            (line  73)
 * piecewise asymptote:                   Indicator modes.     (line  24)
@@ -1319,6 +1379,7 @@ Index
 * spinner:                               Indicator modes.     (line   6)
 * spinner styles:                        Indicator modes.     (line  34)
 * states, lifecycle:                     Concepts.            (line  17)
+* SVG spinner:                           Indicator modes.     (line  40)
 * testing:                               Development.         (line   5)
 * timed-out:                             Concepts.            (line 121)
 * token:                                 Concepts.            (line   9)
@@ -1336,17 +1397,17 @@ Node: Concepts6068
 Node: Simple API11441
 Node: Rich API16028
 Node: Indicator modes24388
-Node: Integrations26092
-Node: Interactive UI30570
-Node: Mode-line lighter32367
-Node: Customization33364
-Node: Hooks and callbacks38141
-Node: Comparison40279
-Node: Caveats42616
-Node: Roadmap43962
-Node: Development44607
-Node: License46280
-Node: Index46600
+Node: Integrations26633
+Node: Interactive UI31111
+Node: Mode-line lighter33991
+Node: Customization34988
+Node: Hooks and callbacks40410
+Node: Comparison42548
+Node: Caveats44885
+Node: Roadmap46231
+Node: Development46876
+Node: License48549
+Node: Index48869
 
 End Tag Table
 
