@@ -1,0 +1,1380 @@
+\input texinfo    @c -*- texinfo -*-
+@c %**start of header
+@setfilename pending.info
+@settitle Pending: Async content placeholders for Emacs
+@documentencoding UTF-8
+@syncodeindex vr cp
+@syncodeindex fn cp
+@c %**end of header
+
+@copying
+This manual describes Pending v0.1.0, a library for marking buffer
+regions whose content arrives asynchronously.
+
+Copyright @copyright{} 2026 John Wiegley.
+
+@quotation
+Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.3 or
+any later version published by the Free Software Foundation; with no
+Invariant Sections, no Front-Cover Texts, and no Back-Cover Texts.
+A copy of the license is included in the section entitled ``GNU Free
+Documentation License''.
+@end quotation
+@end copying
+
+@dircategory Emacs misc features
+@direntry
+* Pending: (pending). Async content placeholders for Emacs.
+@end direntry
+
+@finalout
+@titlepage
+@title Pending
+@subtitle Async content placeholders for Emacs
+@subtitle for version 0.1.0
+@author John Wiegley
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top Pending
+
+@insertcopying
+@end ifnottex
+
+@menu
+* Introduction::                What Pending is and isn't.
+* Installation::                Getting Pending into your Emacs.
+* Quick start::                 Five minutes to your first placeholder.
+* Concepts::                    Tokens, lighters, registry, indicators.
+* Simple API::                  The everyday entry points.
+* Rich API::                    The full keyword API.
+* Indicator modes::             Spinner, percent, ETA, lighter.
+* Integrations::                Recipes for common async backends.
+* Interactive UI::              The list buffer and cancel-at-point.
+* Mode-line lighter::           The clickable indicator.
+* Customization::               Variables and faces.
+* Hooks and callbacks::         Lifecycle wiring.
+* Comparison::                  @code{org-pending} and prior art.
+* Caveats::                     Known limitations.
+* Roadmap::                     What's planned for v0.2.
+* Development::                 Building and testing.
+* GNU Free Documentation License:: Manual license.
+* Index::
+@end menu
+
+
+@node Introduction
+@chapter Introduction
+@cindex introduction
+@cindex overview
+
+Pending is a standalone Emacs Lisp library for marking buffer regions
+whose content will arrive asynchronously.  It provides a colored
+placeholder where some asynchronously computed text is going to
+appear, optionally with a spinner or progress bar, and atomically
+replaces it with the result when ready.
+
+@example
+Calling Claude  @U{280B} [@U{2588}@U{2588}@U{2588}@U{2588}@U{2588}@U{2588}@U{2588}@U{2588}@U{00B7}@U{00B7}@U{00B7}@U{00B7}@U{00B7}@U{00B7}@U{00B7}@U{00B7}] 47%
+@end example
+
+Common use cases:
+
+@itemize @bullet
+@item LLM streaming responses (@code{gptel}, @code{agent-shell}, your
+own Claude/OpenAI client).
+@item Long-running shell commands run via @code{make-process}.
+@item Network fetches via @code{url-retrieve}.
+@item Arbitrary callback-driven asynchronous work.
+@end itemize
+
+@cindex why pending
+The library aims for four properties that make asynchronous insertion
+pleasant for end users:
+
+@table @strong
+@item Visible async
+Users see immediately @emph{where} the answer will land and
+@emph{that} something is happening.  No silent wait while staring at
+a static buffer.
+
+@item Atomic resolution
+The swap from placeholder to result is exactly one undo step.  No
+torn intermediate states, no partial-edit history pollution.
+
+@item Edit-survival
+While pending, the placeholder text is read-only.  Surrounding edits
+adjust the placeholder's markers automatically; if the user deletes
+the region outright, the placeholder cancels itself rather than
+resolving into deleted space.
+
+@item Backend-agnostic
+The library does not commit to any particular async pattern; it
+provides a small primitive (token + atomic swap) that integrates with
+@code{gptel}, @code{make-process}, @code{url-retrieve}, plain timers,
+or your own callback-driven pattern.
+@end table
+
+A single global animation timer drives all in-flight placeholders, so
+spinning N concurrent regions costs only N overlay decorations per
+tick, not N timers.
+
+
+@node Installation
+@chapter Installation
+@cindex installation
+@cindex requirements
+
+Pending requires Emacs 27.1 or newer and has no third-party runtime
+dependencies.
+
+@section Via @code{package-vc-install}
+
+@example
+(package-vc-install
+ '(pending :url "https://github.com/jwiegley/pending"))
+@end example
+
+To install from a local checkout:
+
+@example
+(package-vc-install-from-checkout "/path/to/pending" "pending")
+@end example
+
+@section Via @code{use-package}
+
+@example
+(use-package pending
+  :vc (:url "https://github.com/jwiegley/pending")
+  :commands (pending-make pending-overlay pending-insert
+             pending-resolve pending-cancel pending-list
+             pending-demo)
+  :config
+  (global-pending-lighter-mode 1))
+@end example
+
+@section Manual
+
+Drop @file{pending.el} somewhere on @code{load-path} and
+@code{(require 'pending)}.
+
+
+@node Quick start
+@chapter Quick start
+@cindex quick start
+
+The simplest path is the positional API: mark a region or point as
+pending, then atomically replace it when the answer arrives.
+
+@section Mark a region for rewrite
+
+@example
+(let ((tok (pending-overlay (line-beginning-position)
+                            (line-end-position)
+                            "rewriting")))
+  ;; @dots{} kick off async work @dots{}
+  (pending-resolve tok "the new text"))
+@end example
+
+@section Mark a single point for insertion
+
+@example
+(let ((tok (pending-insert (point) "Calling Claude")))
+  (run-at-time 2 nil (lambda () (pending-resolve tok "Hello!"))))
+@end example
+
+@section Cancel from point
+
+Place the cursor on a placeholder and run @kbd{M-x
+pending-cancel-at-point}.  The placeholder's overlay also binds
+@kbd{RET} and @kbd{mouse-1} to the same command via
+@code{pending-overlay-map}, so a single @kbd{RET} on the highlighted
+region cancels the in-flight work.
+
+@section Show the lighter mode
+
+@example
+M-x global-pending-lighter-mode
+@end example
+
+The mode-line gains a small @code{[N@U{23F3}~Ks]} summary while any
+placeholders are active.  Clicking the lighter opens
+@code{pending-list}.
+
+
+@node Concepts
+@chapter Concepts
+@cindex concepts
+
+@section Tokens
+@cindex token
+@cindex pending struct
+
+Every constructor returns a @dfn{token} --- a @code{pending} struct
+used as a handle for the placeholder.  Pass the token to
+@code{pending-resolve}, @code{pending-cancel}, @code{pending-update},
+and friends to operate on the placeholder.
+
+Tokens are valid until they reach a terminal state.  Operations on a
+terminal token are no-ops with a @code{:debug} warning.
+
+@cindex states, lifecycle
+The lifecycle states are:
+
+@table @code
+@item :scheduled
+The placeholder has been created but no work has begun (or the caller
+has not yet sent any signal).
+
+@item :running
+The caller has indicated that work is in progress.  This state is
+reserved for future use; current call-sites typically transition
+directly from @code{:scheduled} to @code{:streaming} or to a terminal
+state.
+
+@item :streaming
+At least one chunk has been delivered via
+@code{pending-resolve-stream}.  The end marker's insertion-type is
+@code{t}, so subsequent chunks append at the end naturally.
+
+@item :resolved
+Terminal.  The placeholder's region has been replaced with the final
+content.
+
+@item :rejected
+Terminal.  The placeholder failed; the region carries an error glyph
+plus reason.
+
+@item :cancelled
+Terminal.  The user (or library) cancelled the placeholder; the
+region carries a small cancelled glyph.
+
+@item :expired
+Terminal.  Reserved for future use.
+@end table
+
+@code{pending-active-p} returns non-nil for the first three states
+(@code{:scheduled}, @code{:running}, @code{:streaming}); the others
+are terminal.
+
+@section The pending registry
+@cindex registry
+@cindex pending-alist
+
+All active placeholders are recorded in a global registry.  Two
+public functions surface it:
+
+@table @code
+@item pending-alist
+Returns @code{((ID . STRUCT) @dots{})} for every registered
+placeholder, including terminal ones still in transit.  Order is
+unspecified; the alist is fresh and safe to mutate.
+
+@item pending-list-active
+Returns a list of structs in active states only.  Accepts optional
+@code{BUFFER} and @code{GROUP} filters.
+@end table
+
+The registry is also the data source for @kbd{M-x pending-list} and
+the mode-line lighter.
+
+@section Lighter vs region highlight
+@cindex lighter
+@cindex highlight
+
+The library distinguishes two visual treatments:
+
+@table @strong
+@item Region highlight
+The body of the placeholder uses the @code{pending-highlight} face so
+the user can see @emph{where} the asynchronous content will land.
+
+@item Lighter
+A small bold badge (face @code{pending-lighter}) attached to the
+overlay's @code{before-string}.  This is the prominent visual marker
+that draws the eye.
+@end table
+
+The simple API uses a static lighter (@code{:lighter} indicator).
+The rich API can substitute an animated spinner, a determinate bar,
+or an ETA bar in place of the static lighter.
+
+@section Read-only protection
+@cindex read-only
+@cindex edit-survival
+
+While a placeholder is active, its inserted text is read-only via
+text properties:
+
+@itemize @bullet
+@item @code{read-only t}
+@item @code{front-sticky '(read-only)} so insertions just before the
+placeholder are blocked.
+@item @code{rear-nonsticky '(read-only)} so insertions just after it
+are allowed.
+@end itemize
+
+The user can edit before and after the placeholder freely, but not
+the placeholder body itself.  The library binds
+@code{inhibit-read-only} during its own operations so internal swaps
+still work.
+
+In adopt mode (@code{pending-make} with explicit @code{:start} and
+@code{:end}), the library does @emph{not} retroactively add
+read-only properties --- the caller owns that text.
+
+@section Auto-cancellation paths
+@cindex auto-cancellation
+@cindex region-deleted
+@cindex buffer-killed
+@cindex timed-out
+
+Several edge conditions auto-cancel an in-flight placeholder so it
+cannot strand state:
+
+@table @strong
+@item Region deletion
+If the user deletes the entire placeholder region, the overlay
+collapses to zero length and a @code{modification-hook} cancels with
+reason @code{:region-deleted}.
+
+@item Buffer kill
+@code{kill-buffer-hook} iterates the buffer's pending registry and
+cancels each with reason @code{:buffer-killed}.
+
+@item Deadline
+When @code{pending-make} is called with @code{:deadline N}, a one-shot
+timer fires @code{pending-reject} with reason @code{:timed-out} if
+the placeholder is still active after N seconds.
+
+@item Process death
+@code{pending-attach-process} wraps the process sentinel; if the
+process dies non-cleanly (or cleanly without an explicit resolve),
+the placeholder is rejected with a reason derived from
+@code{process-status}.
+
+@item Emacs exit
+When @code{pending-confirm-on-emacs-exit} is non-nil and active
+placeholders exist, @code{kill-emacs-query-functions} prompts before
+exit.
+@end table
+
+
+@node Simple API
+@chapter Simple API
+@cindex simple API
+@cindex positional API
+
+The simple positional API is the recommended starting point.  Each
+function returns a token; pass that token to
+@code{pending-resolve}/@code{pending-cancel} when ready.
+
+@deffn Function pending-overlay beg-or-token &optional end str
+@findex pending-overlay
+Two call shapes are supported.
+
+@strong{Constructor:} @code{(pending-overlay BEG END STR)}.  Mark the
+region @code{[BEG, END]} in the current buffer as pending an
+asynchronous change.  Highlight the region with
+@code{pending-highlight} face and show STR as a lighter badge at BEG
+using @code{pending-lighter} face.  If BEG equals END, no region is
+highlighted; only the lighter shows.  Returns a TOKEN (a
+@code{pending} struct) usable with @code{pending-resolve},
+@code{pending-cancel}, and @code{pending-goto}.
+
+@strong{Accessor:} @code{(pending-overlay TOKEN)}.  Back-compat
+accessor: return the live overlay object owned by TOKEN, or nil.
+Equivalent to @code{(pending-ov TOKEN)}.
+
+@example
+(let ((tok (pending-overlay (region-beginning) (region-end)
+                            "summarising")))
+  (gptel-request (buffer-substring (region-beginning) (region-end))
+   :callback (lambda (text _) (pending-resolve tok text))))
+@end example
+@end deffn
+
+@deffn Function pending-insert pos str
+@findex pending-insert
+Mark POS as pending insertion of asynchronously-computed text.  Shows
+STR as a lighter badge at POS.  No region is highlighted (BEG = END).
+Returns a token.  When eventually resolved with text via
+@code{pending-resolve}, the text is inserted at POS.
+
+@example
+(pending-insert (point) "fetching weather")
+@end example
+@end deffn
+
+@deffn Function pending-resolve token text
+@findex pending-resolve
+Atomically replace TOKEN's region with TEXT.  Transition to
+@code{:resolved}.  Returns t on success, nil if TOKEN was already in
+a terminal state.
+
+The replacement happens inside an @code{atomic-change-group}, so undo
+sees one step.  @code{inhibit-read-only} and
+@code{inhibit-modification-hooks} are bound during the swap.  Side
+effects: removes the overlay, clears markers, unregisters the token,
+cancels any deadline timer, and runs the @code{:on-resolve} callback
+once (errors there are caught and warned).
+
+@example
+(pending-resolve tok "Hello, world!")
+@end example
+@end deffn
+
+@deffn Function pending-cancel p &optional reason
+@findex pending-cancel
+Cancel P, optionally with REASON (default @code{:cancelled-by-user}).
+Calls P's @code{:on-cancel} callback @emph{first}, so the caller can
+abort underlying work (e.g. kill a process).  Then transitions P to
+@code{:cancelled} and replaces the region with a small cancelled
+glyph (@samp{@U{2717} REASON}) faced with @code{pending-cancelled-face}.
+
+The @code{:on-cancel} callback is wrapped in @code{condition-case};
+a buggy callback (or one that signals @code{quit}) does not break
+the cancel pipeline.
+
+@example
+(pending-cancel tok)               ; cancelled-by-user
+(pending-cancel tok :timed-out)    ; explicit reason
+@end example
+@end deffn
+
+@deffn Command pending-goto token
+@findex pending-goto
+Move point to TOKEN's start position.  Switches to TOKEN's buffer if
+not already current.  Signals a @code{user-error} if the buffer is
+dead.
+
+Interactively, prompts via @code{completing-read} over the registered
+placeholders.
+
+@example
+M-x pending-goto RET <pick from list> RET
+@end example
+@end deffn
+
+@deffn Command pending-list
+@findex pending-list
+Display all registered pending placeholders in a tabulated-list
+buffer.  @xref{Interactive UI}, for the full description.
+@end deffn
+
+@deffn Function pending-alist
+@findex pending-alist
+Return an alist snapshot @code{((ID . STRUCT) @dots{})} of all
+currently registered pending placeholders.  Order is unspecified.
+This is a fresh list; mutating it does not affect the registry.
+
+@example
+(length (pending-alist))                                 ; how many
+(mapcar (lambda (cell) (pending-label (cdr cell)))       ; all labels
+        (pending-alist))
+@end example
+@end deffn
+
+@deffn Command pending-cancel-at-point
+@findex pending-cancel-at-point
+Cancel the pending placeholder at point.  Signals a @code{user-error}
+if no placeholder covers point.  Bound to @kbd{RET} and @kbd{mouse-1}
+over a placeholder by @code{pending-overlay-map}.
+@end deffn
+
+
+@node Rich API
+@chapter Rich API
+@cindex rich API
+@cindex pending-make
+
+The rich keyword API provides full control: streaming, animation,
+ETA bars, deadlines, and process attachment.
+
+@deffn Function pending-make buffer &key label start end indicator @
+deadline eta percent face spinner-style on-cancel on-resolve group
+@findex pending-make
+The full constructor.  Inserts (or adopts) a placeholder in BUFFER.
+Returns the new @code{pending} struct.
+
+Insertion modes:
+
+@table @strong
+@item Insert mode
+If both START and END are nil, insert a new placeholder at point in
+BUFFER.  The inserted label text is propertized read-only.
+
+@item Adopt mode
+If both START and END are non-nil (positions or markers), adopt the
+existing region @code{[START, END]}; do not insert text.  Adopt mode
+does NOT retroactively add read-only properties to the existing text;
+the caller owns that text.
+@end table
+
+It is an error to supply only one of START or END.
+
+@multitable @columnfractions .22 .78
+@headitem Keyword @tab Meaning
+@item @code{:label}
+@tab Short string shown inside the placeholder.  Default
+@samp{Pending}.
+
+@item @code{:start} @code{:end}
+@tab Adopt mode endpoints (positions or markers).  Both or neither.
+
+@item @code{:indicator}
+@tab @code{:spinner} (default), @code{:percent}, @code{:eta}, or
+@code{:lighter} (static badge).
+
+@item @code{:percent}
+@tab Initial fraction in @code{[0.0, 1.0]} for @code{:percent} mode.
+
+@item @code{:eta}
+@tab Estimated total seconds for @code{:eta} mode.
+
+@item @code{:deadline}
+@tab Wall-clock seconds until auto-rejection with reason
+@code{:timed-out}.
+
+@item @code{:face}
+@tab Override @code{pending-face} for the placeholder body.
+
+@item @code{:spinner-style}
+@tab Key into @code{pending-spinner-styles}.
+
+@item @code{:on-cancel}
+@tab Function @code{(P)} called @emph{before} the cancellation
+pipeline.  Abort underlying work here.
+
+@item @code{:on-resolve}
+@tab Function @code{(P)} called once on transition to any terminal
+state.
+
+@item @code{:group}
+@tab Symbol for filtering via @code{pending-list-active}.
+@end multitable
+
+Side effects: inserts placeholder text (insert mode), creates and
+adopts an overlay, registers the struct, optionally schedules the
+deadline timer, and installs the buffer-kill hook locally.  Signals
+@code{pending-error} on invalid arguments or a dead/read-only buffer.
+
+@example
+(pending-make (current-buffer)
+              :label "Calling Claude"
+              :indicator :spinner
+              :on-cancel (lambda (_) (gptel-abort)))
+@end example
+@end deffn
+
+@deffn Function pending-update p &key label percent eta indicator
+@findex pending-update
+Mutate slots mid-flight without changing state.  Useful when the
+caller learns more about progress --- e.g. switch from @code{:spinner}
+to @code{:percent} once the total work size is known.
+
+Clears the spinner-glyph render cache so any indicator/style changes
+apply on the next tick.  No-op (with debug warning) if P is in a
+terminal state.
+
+@example
+(pending-update tok :percent 0.42)
+(pending-update tok :indicator :eta :eta 10.0)
+@end example
+@end deffn
+
+@deffn Function pending-resolve-stream p chunk
+@findex pending-resolve-stream
+Append CHUNK (a string) to P's region.  The spinner / progress
+indicator stays visible.
+
+On the first chunk (when P is @code{:scheduled} or @code{:running})
+the loading-label content is deleted and replaced by CHUNK, the end
+marker's insertion-type is flipped to t, and the status transitions
+to @code{:streaming}.  Subsequent chunks append at the end marker,
+which advances with the insert because of its insertion-type.
+
+Streamed text gets the same read-only properties as the initial
+label.  The library binds @code{inhibit-read-only} and
+@code{inhibit-modification-hooks} so its own inserts do not retrigger
+the cancel-on-collapse hook.
+
+This does NOT finalize.  The caller must follow up with
+@code{pending-finish-stream}, @code{pending-reject}, or
+@code{pending-cancel}.
+
+If P is already terminal, this is a no-op (debug warning); the chunk
+is dropped.  Signals @code{wrong-type-argument} if CHUNK is not a
+string; an empty string is a no-op.
+
+@example
+(pending-resolve-stream tok "Once upon a time, ")
+(pending-resolve-stream tok "in a faraway land@dots{}")
+@end example
+@end deffn
+
+@deffn Function pending-finish-stream p
+@findex pending-finish-stream
+Finalize a streamed placeholder.  Transitions P from
+@code{:streaming} to @code{:resolved}.  Locks the end marker, strips
+read-only properties from the streamed region (so the resolved text
+becomes editable), removes the overlay's animated decorations,
+deletes the overlay, unregisters P, and fires its @code{:on-resolve}
+callback.
+
+If P is @code{:scheduled} or @code{:running} (no chunks were ever
+streamed), behaves like @code{(pending-resolve P "")}.  If P is
+already terminal, a no-op with debug warning.
+
+@example
+(pending-finish-stream tok)
+@end example
+@end deffn
+
+@deffn Function pending-reject p reason &optional replacement-text
+@findex pending-reject
+Mark P as failed with REASON and replace its region.  REASON should
+be a string or a keyword/symbol describing the failure.
+REPLACEMENT-TEXT defaults to a glyph plus the reason rendered with
+@code{pending-error-face}.
+
+Side effects mirror @code{pending-resolve} (removes overlay, clears
+markers, unregisters, cancels timer, runs @code{:on-resolve}).
+
+@example
+(pending-reject tok "API rate limit exceeded")
+(pending-reject tok :network-down "Try again later.")
+@end example
+@end deffn
+
+@deffn Function pending-attach-process p process
+@findex pending-attach-process
+Wire PROCESS so its death rejects P appropriately.  The process's
+existing sentinel, if any, is preserved: it runs first, then a
+wrapper inspects @code{process-status} and calls @code{pending-reject}
+on non-clean exit.  The reason is derived from the live process
+status, which is robust against localized event strings.
+
+Behaviour by status:
+
+@table @code
+@item exit @r{(code 0)}
+If P is still active, reject with @samp{process exited without
+resolving}.
+
+@item exit @r{(non-zero)}
+Reject with @samp{process: exited with code N}.
+
+@item signal
+Reject with @samp{process: killed (signal N)}.
+
+@item failed
+Reject with @samp{process: failed}.
+
+@item closed
+Reject with @samp{process: connection closed}.
+
+@item run / open / stop / listen / connect
+No-op; the placeholder remains active.
+@end table
+
+If multiple processes are attached over P's lifetime, the LAST
+attach wins for the @code{attached-process} slot, but each prior
+process's wrapper still chains through.  A stale process exit will
+still flow into @code{pending-reject}, which is a no-op once P is
+terminal because of the single-resolution guard.
+
+@example
+(let ((proc (start-process "build" nil "make")))
+  (pending-attach-process tok proc))
+@end example
+@end deffn
+
+@deffn Function pending-active-p p
+@findex pending-active-p
+Return non-nil if P is in an active (non-terminal) lifecycle state.
+The active states are @code{:scheduled}, @code{:running}, and
+@code{:streaming}.
+@end deffn
+
+@deffn Function pending-status p
+@findex pending-status
+Return P's current status keyword.
+@end deffn
+
+@deffn Function pending-at &optional pos buffer
+@findex pending-at
+Return the pending struct at POS in BUFFER, or nil if none.  POS
+defaults to point; BUFFER defaults to the current buffer.  Searches
+the overlays at POS for one carrying a @code{pending} property.
+@end deffn
+
+@deffn Function pending-list-active &optional buffer group
+@findex pending-list-active
+Return the list of active pending structs.  Optional BUFFER and
+GROUP filter the result.  Order within the result is unspecified.
+@end deffn
+
+
+@node Indicator modes
+@chapter Indicator modes
+@cindex indicator
+@cindex spinner
+@cindex progress bar
+@cindex ETA
+
+Choose a visual via the @code{:indicator} keyword to
+@code{pending-make}.  The simple positional API always uses
+@code{:lighter}; the rich API defaults to @code{:spinner}.
+
+@multitable @columnfractions .15 .35 .50
+@headitem Indicator @tab Visual @tab Use when
+@item @code{:spinner}
+@tab Animated glyph + label (default).
+@tab Duration unknown but the library should look alive.
+
+@item @code{:percent}
+@tab Spinner glyph + bar + percent.
+@tab Caller can supply a fraction in @code{[0.0, 1.0]}.
+
+@item @code{:eta}
+@tab Spinner glyph + bar + remaining-seconds estimate.
+@tab Caller has a rough guess at total wall-clock seconds.
+
+@item @code{:lighter}
+@tab Static badge.  No animation.
+@tab Visual marker only; no progress to convey.
+@end multitable
+
+@cindex piecewise asymptote
+The @code{:eta} indicator uses a piecewise-asymptotic formula:
+
+@itemize @bullet
+@item @math{0 \le ratio \le 0.8} --- linear: fraction = ratio.
+@item @math{0.8 < ratio \le 1.0} --- linear, slope 0.75: hits 0.95 at
+ratio = 1.
+@item @math{ratio > 1.0} --- asymptote: @math{1 - 0.05 e^{-(ratio-1)}}.
+@end itemize
+
+This avoids the ``100% but still working'' effect that bothers users.
+The bar saturates toward (but never reaches) 100% past the deadline,
+so callers can rely on ``not done until I say so.''
+
+@cindex spinner styles
+Spinner styles ship with: @code{dots-1}, @code{dots-2}, @code{line},
+@code{arc}, @code{clock}.  Add your own:
+
+@example
+(add-to-list 'pending-spinner-styles
+             '(my-style . ["a" "b" "c"]))
+@end example
+
+
+@node Integrations
+@chapter Integrations
+@cindex integrations
+@cindex recipes
+
+Each recipe below is a copy-pasteable function.  Adapt the prompts,
+commands, and URLs to taste.
+
+@section gptel --- streaming response
+@cindex gptel
+
+@example
+(defun my/gptel-pending-stream (prompt)
+  "Send PROMPT via gptel; stream the response into a pending placeholder."
+  (let ((p (pending-make (current-buffer)
+                         :label "Calling Claude"
+                         :indicator :spinner
+                         :on-cancel (lambda (_)
+                                      (gptel-abort (current-buffer))))))
+    (gptel-request
+     prompt
+     :stream t
+     :position (pending-end p)
+     :callback (lambda (chunk info)
+                 (cond
+                  ((stringp chunk) (pending-resolve-stream p chunk))
+                  ((plist-get info :error)
+                   (pending-reject p (plist-get info :error)))
+                  (t (pending-finish-stream p)))))
+    p))
+@end example
+
+@section gptel --- non-streaming response
+
+@example
+(defun my/gptel-pending-call (prompt)
+  "Send PROMPT via gptel; replace the pending placeholder with the response."
+  (let ((p (pending-insert (point) "Calling Claude")))
+    (gptel-request
+     prompt
+     :callback (lambda (response info)
+                 (cond
+                  ((stringp response) (pending-resolve p response))
+                  ((plist-get info :error)
+                   (pending-reject p (plist-get info :error)))
+                  (t (pending-cancel p)))))
+    p))
+@end example
+
+@section @code{make-process} --- capture stdout
+@cindex make-process
+
+@example
+(defun my/run-shell-pending (cmd)
+  "Run CMD in a shell; stream stdout into a pending placeholder."
+  (let* ((p (pending-make (current-buffer)
+                          :label (format "Running: %s" cmd)
+                          :indicator :spinner))
+         (proc (make-process
+                :name "shell-pending"
+                :buffer nil
+                :command (list shell-file-name "-c" cmd)
+                :filter (lambda (_proc out)
+                          (pending-resolve-stream p out))
+                :sentinel (lambda (_proc event)
+                            (if (string-prefix-p "finished" event)
+                                (pending-finish-stream p)
+                              (pending-reject p (string-trim event)))))))
+    (pending-attach-process p proc)
+    (setf (pending-on-cancel p) (lambda (_) (delete-process proc)))
+    p))
+@end example
+
+@section @code{url-retrieve} --- async fetch
+@cindex url-retrieve
+
+@example
+(defun my/fetch-pending (url)
+  "GET URL; replace the pending placeholder with its body."
+  (let ((p (pending-make (current-buffer)
+                         :label (format "Fetching %s" url)
+                         :indicator :eta :eta 5.0
+                         :deadline 60)))
+    (url-retrieve
+     url
+     (lambda (status)
+       (cond
+        ((plist-get status :error)
+         (pending-reject p (format "%S" (plist-get status :error))))
+        (t
+         (goto-char (point-min))
+         (re-search-forward "^$" nil t)
+         (pending-resolve p (buffer-substring (point) (point-max)))))))
+    p))
+@end example
+
+@section Pure-delay timer
+
+A useful template for tests and demos:
+
+@example
+(defun my/delay-pending (seconds text)
+  "Show a pending placeholder; replace with TEXT after SECONDS."
+  (let ((p (pending-insert (point) (format "wait %ds" seconds))))
+    (run-at-time seconds nil
+                 (lambda ()
+                   (when (pending-active-p p)
+                     (pending-resolve p text))))
+    p))
+@end example
+
+@section Generic callback-driven async
+
+@example
+(defun my/with-pending (label callback)
+  "Show a pending placeholder labelled LABEL.
+CALLBACK is called with the token; it must arrange to call
+`pending-resolve' or `pending-reject' on the token."
+  (let ((p (pending-make (current-buffer)
+                         :label label
+                         :indicator :spinner)))
+    (funcall callback p)
+    p))
+@end example
+
+
+@node Interactive UI
+@chapter Interactive UI
+@cindex interactive UI
+@cindex pending list
+
+@section The @code{*Pending*} buffer
+@cindex Pending buffer
+
+@kbd{M-x pending-list} opens a tabulated-list view with one row per
+registered placeholder.
+
+@multitable @columnfractions .15 .12 .73
+@headitem Column @tab Width @tab Meaning
+@item ID      @tab 16 @tab Generated symbol name (@code{pending-N}).
+@item Buffer  @tab 24 @tab Buffer hosting the placeholder.
+@item Label   @tab 30 @tab The label string, truncated.
+@item Status  @tab 12 @tab Status keyword, e.g. @code{:streaming}.
+@item Elapsed @tab  8 @tab Wall-clock seconds since creation.
+@item ETA     @tab  8 @tab The placeholder's ETA, or @samp{-}.
+@item Group   @tab 10 @tab The placeholder's group symbol, or @samp{-}.
+@end multitable
+
+Bindings:
+
+@table @kbd
+@item g
+@findex pending-list-refresh
+Re-read the registry.
+@item RET
+@findex pending-list-jump
+Pop to the placeholder's buffer.
+@item c
+@findex pending-list-cancel
+Cancel; reason @code{:cancelled-from-list}.
+@item q
+Bury the buffer.
+@end table
+
+The list does not auto-refresh in v0.1; press @kbd{g} to update.
+Auto-refresh is on the v0.2 roadmap.
+
+@section Cancel from point
+
+@kbd{M-x pending-cancel-at-point} cancels the placeholder under
+point.  The library installs an overlay keymap on every placeholder
+binding @kbd{RET} and @kbd{mouse-1} to the same command:
+
+@defvr Variable pending-overlay-map
+@vindex pending-overlay-map
+Keymap installed on placeholder overlays.  Bound to @kbd{RET} and
+@kbd{mouse-1} for @code{pending-cancel-at-point}.
+@end defvr
+
+@section The demo
+@cindex demo
+
+@deffn Command pending-demo
+@findex pending-demo
+Open @code{*pending-demo*} with three concurrent placeholders
+demonstrating the spinner, ETA, and percent indicators.  They resolve
+themselves over about 12 seconds.  Useful for visual inspection of
+the library on the current theme.
+@end deffn
+
+
+@node Mode-line lighter
+@chapter Mode-line lighter
+@cindex mode-line lighter
+@cindex global-pending-lighter-mode
+
+@deffn Command global-pending-lighter-mode
+@findex global-pending-lighter-mode
+A global minor mode that appends a small construct to
+@code{global-mode-string}.  When enabled, the mode-line displays:
+
+@example
+ [3@U{23F3}~5s]
+@end example
+
+Meaning: @emph{3 active placeholders; the smallest remaining ETA
+across them is approximately 5 seconds}.  When no placeholder has an
+ETA in the future, the trailing tilde-segment is omitted:
+@code{[3@U{23F3}]}.  When no placeholders are active, the lighter is
+hidden entirely.
+
+The lighter is propertized with @code{pending-spinner-face}, carries
+a help-echo tooltip, and binds @kbd{mouse-1} to @code{pending-list}.
+@end deffn
+
+@deffn Function pending-mode-line-string
+@findex pending-mode-line-string
+Compute the lighter string.  Return a propertized string or nil.
+Suitable for incorporating manually into a custom mode-line construct
+without enabling the global mode.
+@end deffn
+
+
+@node Customization
+@chapter Customization
+@cindex customization
+
+@section User options
+
+@defopt pending-fps
+Animation rate of pending placeholders, in frames per second.  Used
+by the single global animation timer that walks the registry on each
+tick.  A value of 10 (default) is the conventional sweet spot for
+in-buffer spinners --- fast enough to read as motion, slow enough not
+to hammer redisplay.
+@end defopt
+
+@defopt pending-bar-width
+Width of the textual progress bar, in cells.  Default 16.  Used by
+the @code{:percent} and @code{:eta} indicators.
+@end defopt
+
+@defopt pending-default-spinner-style
+Default key into @code{pending-spinner-styles} for new placeholders.
+Default @code{'dots-1}.  Per-placeholder override available via the
+@code{:spinner-style} keyword to @code{pending-make}.
+@end defopt
+
+@defopt pending-spinner-styles
+Alist mapping spinner style symbols to vectors of frame strings.
+Built-in styles: @code{dots-1}, @code{dots-2}, @code{line},
+@code{arc}, @code{clock}.  Add your own with @code{add-to-list}.
+@end defopt
+
+@defopt pending-bar-style
+Bar character set: @code{eighths} (Unicode eighth-block characters,
+default) or @code{ascii} (ASCII fallback for terminals where Unicode
+block elements don't render).
+@end defopt
+
+@defopt pending-bar-family
+Font family used for the progress bar segment, or nil.  When non-nil,
+the bar text is rendered in this family so that proportional buffer
+faces do not break alignment.  When nil, the bar inherits the
+surrounding face --- variable-pitch users may then see misalignment.
+@end defopt
+
+@defopt pending-allow-read-only
+If non-nil, allow placement of placeholders in read-only buffers.
+By default @code{pending-make} refuses to operate on a buffer where
+@code{buffer-read-only} is non-nil; setting this to t binds
+@code{inhibit-read-only} during insertion and resolution.  Useful for
+hosts like @code{compilation-mode} or chat buffers that flip
+read-only on the caller's behalf.
+@end defopt
+
+@defopt pending-label-max-width
+Maximum width, in characters, of a placeholder's visible label.
+Default 60.  Labels longer than this are truncated with an ellipsis;
+the full label remains available in the placeholder's tooltip.
+@end defopt
+
+@defopt pending-confirm-on-emacs-exit
+If non-nil, prompt before exiting Emacs while placeholders are
+active.  Implemented via @code{pending--kill-emacs-query}, which is
+registered on @code{kill-emacs-query-functions} at load time.  When
+nil (the default) the query function returns t unconditionally and
+the exit is not blocked.
+@end defopt
+
+@section Faces
+@cindex faces
+
+@deffn Face pending-highlight
+@findex pending-highlight
+Background of the highlighted region of a pending overlay
+(@code{BEG..END}).  Applied to the placeholder body so the user can
+see where the asynchronously-arriving content will land.
+@end deffn
+
+@deffn Face pending-lighter
+@findex pending-lighter
+Static badge shown at BEG of a pending overlay.  Bold white-on-red
+by default for high visibility.  The lighter is a visual badge
+attached to the overlay's @code{before-string}, not text in the
+buffer.
+@end deffn
+
+@deffn Face pending-face
+@findex pending-face
+Compatibility alias for @code{pending-highlight}.  Older code paths
+reference @code{pending-face} for the placeholder body; new code
+should prefer @code{pending-highlight}.
+@end deffn
+
+@deffn Face pending-spinner-face
+@findex pending-spinner-face
+The before-string spinner glyph.
+@end deffn
+
+@deffn Face pending-progress-face
+@findex pending-progress-face
+The after-string progress bar and ETA text.  Apply
+@code{pending-bar-family} on top of this face when set, to keep
+alignment under variable-pitch buffer faces.
+@end deffn
+
+@deffn Face pending-error-face
+@findex pending-error-face
+Replacement text for rejected placeholders.
+@end deffn
+
+@deffn Face pending-cancelled-face
+@findex pending-cancelled-face
+Replacement text for cancelled placeholders.
+@end deffn
+
+
+@node Hooks and callbacks
+@chapter Hooks and lifecycle callbacks
+@cindex hooks
+@cindex callbacks
+
+@section Per-placeholder callbacks
+
+@subsection @code{:on-cancel}
+@cindex on-cancel
+
+Called @emph{before} the cancellation pipeline runs.  Abort
+underlying work here --- kill processes, abort gptel requests, cancel
+timers.
+
+@example
+(pending-make (current-buffer)
+              :label "Calling Claude"
+              :on-cancel (lambda (p)
+                           (gptel-abort (pending-buffer p))))
+@end example
+
+If @code{:on-cancel} signals an error or @code{quit}, the cancel
+pipeline catches it and proceeds; the placeholder cannot get
+stranded.
+
+@subsection @code{:on-resolve}
+@cindex on-resolve
+
+Called @emph{once} on transition to any terminal state
+(@code{:resolved}, @code{:rejected}, @code{:cancelled},
+@code{:expired}).  Inspect @code{(pending-status p)} inside the
+callback to differentiate.
+
+@example
+(pending-make (current-buffer)
+              :label "Calling Claude"
+              :on-resolve (lambda (p)
+                            (message "Done: %s -> %s"
+                                     (pending-label p)
+                                     (pending-status p))))
+@end example
+
+@section Global hooks installed by the library
+
+@table @code
+@item kill-buffer-hook
+Buffer-local.  Cancels every placeholder in the buffer being killed
+with reason @code{:buffer-killed}.
+
+@item kill-emacs-query-functions
+When @code{pending-confirm-on-emacs-exit} is non-nil, prompts before
+exit if active placeholders exist.
+
+@item window-buffer-change-functions
+Re-arms the parked animation timer when a placeholder's buffer
+becomes visible.
+@end table
+
+@code{pending-unload-function} cleans up the timer and removes the
+global hooks on @code{unload-feature}.
+
+@section Errors
+@cindex errors
+
+@deffn Error pending-error
+The library's own error symbol.  Signalled by @code{pending-make} for
+invalid arguments (dead buffer, read-only buffer when not allowed,
+mismatched START/END, out-of-bounds positions).
+@end deffn
+
+
+@node Comparison
+@chapter Comparison with @code{org-pending}
+@cindex org-pending
+@cindex comparison
+
+Bruno Barbier's @code{org-pending} is a closely related upstream Org
+patch (branch @code{bba-pending-contents}) that nevertheless declares
+itself independent of Org mode.  It solves a similar problem from a
+different angle.
+
+@multitable @columnfractions .20 .40 .40
+@headitem Aspect @tab @code{org-pending} @tab @code{pending}
+@item Distribution
+@tab Org-mode patch
+@tab Standalone library
+
+@item Org dependency
+@tab None (but namespace and prefix imply Org)
+@tab None
+
+@item State machine
+@tab @code{:scheduled @U{2192} :pending @U{2192} :success/:failure}
+@tab Adds @code{:running}, @code{:streaming}, @code{:cancelled},
+@code{:expired}
+
+@item Animation
+@tab Static Unicode glyph
+@tab Animated spinner (10 fps, single global timer)
+
+@item Progress bar
+@tab Single line of text in @code{after-string}
+@tab Eighth-block Unicode bar (or ASCII fallback)
+
+@item Streaming
+@tab Message-passing via @code{org-pending-send-update}
+@tab First-class @code{pending-resolve-stream} /
+@code{-finish-stream}
+
+@item Description UI
+@tab @code{*Region Lock*} describe buffer
+@tab Tabulated list (deferred describe-buffer)
+
+@item Indirect buffers
+@tab Read-only projection
+@tab Not yet --- single-buffer scope
+
+@item Kill-emacs query
+@tab Built in
+@tab Same hook, gated by @code{pending-confirm-on-emacs-exit}
+@end multitable
+
+The two libraries can coexist.  Pick whichever suits your caller: if
+you live in Org and want minimal animation, prefer
+@code{org-pending}; if you want streaming and progress visualization
+out of the box, prefer @code{pending}.
+
+
+@node Caveats
+@chapter Limitations and caveats
+@cindex caveats
+@cindex limitations
+
+@itemize @bullet
+@item @strong{~50 placeholders per buffer guideline.}  Each
+placeholder is an overlay, and overlays have O(n) scan cost for
+some buffer operations.  Keep concurrent counts modest.
+
+@item @strong{Variable-pitch alignment.}  The @code{:percent} and
+@code{:eta} bars assume a monospaced cell width.  Under
+variable-pitch buffer faces, the bar may look ragged.  Set
+@code{pending-bar-family} to a fixed-pitch family to compensate.
+
+@item @strong{No SVG spinner in v0.1.}  Spinners are text glyphs
+only.  SVG spinners (and a fringe-bitmap indicator) are on the v0.2
+roadmap.
+
+@item @strong{Manual refresh of @code{*Pending*} list.}  Press
+@kbd{g} to update; the list does not auto-refresh on registry
+mutation in v0.1.
+
+@item @strong{Single-buffer scope.}  A placeholder's overlay and
+read-only text properties live in one buffer.  There is no
+projection across indirect buffers in v0.1; @code{org-pending}-style
+indirect-buffer projection is on the roadmap.
+
+@item @strong{No cross-buffer multi-region pending.}  A single
+pending struct represents one contiguous region in one buffer.
+Coordinate multiple related placeholders via the @code{:group}
+keyword and @code{pending-list-active}.
+@end itemize
+
+
+@node Roadmap
+@chapter Roadmap
+@cindex roadmap
+@cindex v0.2
+
+Items deferred past the v0.1.0 tag:
+
+@itemize @bullet
+@item Auto-refresh of @code{*Pending*} on registry mutation.
+@item Pulse-on-resolve flash via @code{pulse.el}.
+@item @code{pending-as-promise} adapter for @code{aio} users.
+@item SVG spinner for graphical frames.
+@item Fringe bitmap indicator beside the placeholder.
+@item @code{*Region Lock*}-style description buffer for a single
+placeholder.
+@item Indirect-buffer projection of read-only properties.
+@item @code{pending-test--with-mocked-time} macro for deterministic
+fast-forward testing.
+@end itemize
+
+
+@node Development
+@chapter Development
+@cindex development
+@cindex testing
+
+@section Building
+
+This package uses @uref{https://github.com/emacs-eask/cli, Eask} for
+build automation, with a Makefile wrapper.
+
+@example
+# Install dependencies
+eask install-deps
+
+# Compile (warning-free)
+eask compile
+
+# Run tests (72 ERT tests as of v0.1.0)
+eask test ert pending-test.el
+
+# All-in-one via Make
+make compile
+make test
+make docs       # build doc/pending.info
+make clean
+@end example
+
+@section Generating the manual
+
+The Texinfo source lives at @file{doc/pending.texi}; the built
+@file{pending.info} ships in the package.
+
+@example
+make info       # build doc/pending.info
+make html       # build doc/pending.html (preview)
+make clean-docs
+@end example
+
+@section Interactive development
+
+@example
+;; Reload the library after editing
+(unload-feature 'pending t)
+(load-file "pending.el")
+
+;; Run a single test
+M-x ert RET pending-test/scheduled-to-resolved RET
+
+;; Open the demo
+M-x pending-demo
+@end example
+
+@section Contributing
+
+Bug reports and pull requests are welcome via GitHub.  When filing
+an issue, please include the Emacs version, whether you are running
+graphical or terminal Emacs, steps to reproduce, and a backtrace if
+applicable.
+
+When sending a PR, please match the existing code style (lexical
+binding, double-dash for internal symbols, comprehensive docstrings),
+add ERT tests for new behaviour, ensure @code{eask compile} is
+warning-free and @code{eask test} is green, and run @kbd{M-x
+checkdoc} on touched files.
+
+
+@node GNU Free Documentation License
+@appendix GNU Free Documentation License
+
+The GNU Free Documentation License (GFDL) Version 1.3 applies to
+this manual.  See @uref{https://www.gnu.org/licenses/fdl-1.3.html}
+for the full text.
+
+
+@node Index
+@unnumbered Index
+@printindex cp
+
+@bye
