@@ -1179,6 +1179,55 @@ so the wrapper's lifecycle bookkeeping is not skipped."
           ;; Wrapper still ran, so the placeholder is rejected.
           (should (eq (pending-status p) :rejected)))))))
 
+(ert-deftest pending-test/process-reattach-no-wrapper-leak ()
+  "Re-attaching the same process does not pile up wrapper closures.
+Each `pending-attach-process' on a process whose sentinel is
+already our wrapper peels one layer (recorded under
+`pending--wrapped-original' on the process object) before
+installing a new one.  After two attaches the captured original is
+still the user's sentinel, not the previous wrapper, and the
+process's outermost sentinel matches the recorded
+`pending--wrapped-by' marker.  Without the unwrap each attach
+would chain through the previous wrapper and balloon to O(K)
+closures."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-proc-reattach*")
+      (with-current-buffer buf
+        (let* ((warning-minimum-log-level :error)
+               (user-sentinel-calls 0)
+               (user-sentinel
+                (lambda (_proc _event) (cl-incf user-sentinel-calls)))
+               (p1 (pending-make buf :label "A"))
+               (proc (start-process "p-test-reattach" nil "true")))
+          (set-process-sentinel proc user-sentinel)
+          (pending-attach-process p1 proc)
+          ;; First attach: wrapper installed, original is user-sentinel.
+          (let ((s1 (process-sentinel proc)))
+            (should (eq s1 (process-get proc 'pending--wrapped-by)))
+            (should (eq (process-get proc 'pending--wrapped-original)
+                        user-sentinel))
+            ;; Re-attach with a fresh placeholder; original captured
+            ;; by the new wrapper must still be user-sentinel, not s1.
+            (let ((p2 (pending-make buf :label "B")))
+              (pending-attach-process p2 proc)
+              (let ((s2 (process-sentinel proc)))
+                (should (eq s2 (process-get proc 'pending--wrapped-by)))
+                (should-not (eq s2 s1))
+                (should (eq (process-get proc 'pending--wrapped-original)
+                            user-sentinel)))))
+          ;; Cleanup: let the process exit so the wrapper fires once.
+          (let ((deadline (+ (float-time) 5.0)))
+            (while (and (process-live-p proc) (< (float-time) deadline))
+              (accept-process-output proc 0.1)))
+          ;; Give the sentinel a brief moment to fire.
+          (let ((deadline (+ (float-time) 1.0)))
+            (while (and (zerop user-sentinel-calls)
+                        (< (float-time) deadline))
+              (sit-for 0.05)))
+          ;; The user's sentinel should have fired exactly once,
+          ;; not once per attach (which would be 2).
+          (should (= user-sentinel-calls 1)))))))
+
 
 ;;; Phase 7 — buffer-dead defense in depth
 

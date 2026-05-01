@@ -1813,20 +1813,33 @@ single-resolution guard.
 The PROCESS reference is stored in P's `attached-process' slot.
 Return P."
   (let ((existing (process-sentinel process)))
-    (setf (pending-attached-process p) process)
-    (set-process-sentinel
-     process
-     (lambda (proc event)
-       (when existing
-         (condition-case err
-             (funcall existing proc event)
-           (error
-            (display-warning
-             'pending
-             (format "existing sentinel for process %s signaled: %S"
-                     (process-name proc) err)
-             :error))))
-       (pending--process-sentinel p proc event))))
+    ;; If our own previous wrapper is still installed (this caller
+    ;; is re-attaching the same process across multiple
+    ;; `pending-attach-process' calls), peel one layer so successive
+    ;; attaches do not pile up O(K) closures each chaining through
+    ;; the previous one.  Detection rides on a `pending--wrapped-by'
+    ;; entry on the process object; the original sentinel that
+    ;; predates any pending wrapping is captured under
+    ;; `pending--wrapped-original' so each new wrapper keeps the
+    ;; same outermost target.
+    (when (process-get process 'pending--wrapped-by)
+      (setq existing (process-get process 'pending--wrapped-original)))
+    (let ((wrapper
+           (lambda (proc event)
+             (when existing
+               (condition-case err
+                   (funcall existing proc event)
+                 (error
+                  (display-warning
+                   'pending
+                   (format "existing sentinel for process %s signaled: %S"
+                           (process-name proc) err)
+                   :error))))
+             (pending--process-sentinel p proc event))))
+      (set-process-sentinel process wrapper)
+      (process-put process 'pending--wrapped-by wrapper)
+      (process-put process 'pending--wrapped-original existing))
+    (setf (pending-attached-process p) process))
   p)
 
 
