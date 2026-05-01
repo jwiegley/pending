@@ -345,8 +345,11 @@ Insert mode vs adopt mode:
 - **Insert mode** (no `:start`/`:end`) — inserts a new placeholder
   at point in `BUFFER`. The label text is propertized read-only.
 - **Adopt mode** (both `:start` and `:end`) — takes over the
-  existing region without inserting text. The caller owns the text
-  and is responsible for read-only protection.
+  existing region without inserting text. By default the adopted
+  region becomes read-only while the placeholder is active
+  (controllable via `pending-protect-adopted-region`). Set that
+  defcustom to nil to leave the adopted text editable, matching
+  the v0.1.0 behaviour.
 
 ```elisp
 (pending-make (current-buffer)

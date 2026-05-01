@@ -540,8 +540,10 @@ BUFFER.  The inserted label text is propertized read-only.
 @item Adopt mode
 If both START and END are non-nil (positions or markers), adopt the
 existing region @code{[START, END]}; do not insert text.  Adopt mode
-does NOT retroactively add read-only properties to the existing text;
-the caller owns that text.
+applies read-only properties to the existing text by default,
+controlled by @code{pending-protect-adopted-region}.  Set that
+defcustom to nil to leave the adopted text editable (the v0.1.0
+behaviour, which relied on the overlay's modification-hooks alone).
 @end table
 
 It is an error to supply only one of START or END.
