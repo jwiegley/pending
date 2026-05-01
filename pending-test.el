@@ -1629,6 +1629,7 @@ the fringe display proxy and is followed by the spinner glyph."
   "When graphic + SVG available, spinner before-string contains an image.
 The image string is a propertized one-character space whose
 `display' property is the SVG image returned by `svg-image'."
+  (skip-unless (image-type-available-p 'svg))
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-svg-1*")
       (with-current-buffer buf
@@ -1694,6 +1695,7 @@ gate forces the Unicode fallback."
 Two distinct frame indices populate two distinct entries; the
 second call to `pending--svg-cached' for an already-cached key
 returns the same string by `eq'."
+  (skip-unless (image-type-available-p 'svg))
   (let ((pending--svg-cache (make-hash-table :test 'equal)))
     (let ((s1 (pending--svg-cached 0 8 'dots-1 'pending-spinner-face 16))
           (s2 (pending--svg-cached 1 8 'dots-1 'pending-spinner-face 16))
