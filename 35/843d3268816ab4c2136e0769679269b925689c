@@ -1,0 +1,29 @@
+doc/pending.texi
+  2046fa0cf43c79ba 296-301,313-320,397-404,456-458,565-567,625-627,667-669,1096-1103,1106-1110,1123-1126,1143-1145,1150-1152
+pending-test.el
+  2046fa0cf43c79ba 1324-1379
+pending.el
+  2046fa0cf43c79ba 220-225,243-247,268-271,277-280,394-395,401-405,419,422,432-433,467,868-872,920,938-941,996-1007,1168-1170,1176,1181-1187,1196,1202-1206,1259,1278-1280,1327-1328,1330,1392-1394
+README.md
+  2046fa0cf43c79ba 142-147,149-150,156-163,209-214,217-219,256-258,322,361-363,387-388,636-642,645-647,650-651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "35843d3268816ab4c2136e0769679269b925689c",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 248,
+      "total_deletions": 83,
+      "accepted_lines": 239,
+      "overriden_lines": 0
+    }
+  }
+}
