@@ -281,8 +281,12 @@ alignment under variable-pitch buffer faces."
                        (:predicate pending-p))
   ;; Identity
   id group label
-  ;; Location
-  buffer start end overlay
+  ;; Location.  The slot for the placeholder overlay is named `ov'
+  ;; (auto-generated accessor: `pending-ov'), so the public symbol
+  ;; `pending-overlay' is free for the positional constructor below.
+  ;; A multi-arity wrapper named `pending-overlay' below preserves
+  ;; the historical 1-arg accessor call shape for back-compat.
+  buffer start end ov
   ;; Visual mode
   indicator spinner-style face
   ;; Determinate / ETA state
@@ -438,16 +442,16 @@ resolve was suppressed."
           ;; Strip animation decorations before swapping the region
           ;; so the spinner glyph (Phase 3) does not survive into the
           ;; resolved text.  No-op when the slot was never set.
-          (when (and (overlayp (pending-overlay p))
-                     (overlay-buffer (pending-overlay p)))
-            (overlay-put (pending-overlay p) 'before-string nil)
-            (overlay-put (pending-overlay p) 'after-string nil))
+          (when (and (overlayp (pending-ov p))
+                     (overlay-buffer (pending-ov p)))
+            (overlay-put (pending-ov p) 'before-string nil)
+            (overlay-put (pending-ov p) 'after-string nil))
           (pending--swap-region p new-text face)
           (pending--unregister p)
-          (let ((ov (pending-overlay p)))
+          (let ((ov (pending-ov p)))
             (when (overlayp ov)
               (delete-overlay ov))
-            (setf (pending-overlay p) nil))
+            (setf (pending-ov p) nil))
           (let ((sm (pending-start p))
                 (em (pending-end p)))
             (when (markerp sm) (set-marker sm nil))
@@ -697,7 +701,7 @@ caching at this stage.  No-op if the overlay has been deleted.
 
 In `:lighter' mode the spinner-glyph block is skipped entirely so
 no animation cost is paid; the badge is rendered once below."
-  (let* ((ov (pending-overlay p))
+  (let* ((ov (pending-ov p))
          (indicator (or (pending-indicator p) :spinner)))
     (when (and (overlayp ov) (overlay-buffer ov))
       ;; Spinner glyph — same code path in every indicator mode except
@@ -946,7 +950,7 @@ position falls outside BUFFER's bounds."
                :buffer buffer
                :start start-marker
                :end end-marker
-               :overlay ov
+               :ov ov
                :indicator resolved-indicator
                :spinner-style resolved-spinner
                :face resolved-face
@@ -999,6 +1003,114 @@ position falls outside BUFFER's bounds."
                  (when (pending-active-p p)
                    (pending-reject p :timed-out))))))
       p)))
+
+
+;;; Public API: simple positional surface (overlay / insert / goto / alist)
+
+;;;###autoload
+(defun pending-overlay (beg-or-token &optional end str)
+  "Create a pending overlay or return a token's overlay.
+
+Two call shapes are supported:
+
+  (pending-overlay BEG END STR)
+    Mark the region [BEG, END] in the current buffer as pending an
+    asynchronous change.  Highlights the region with
+    `pending-highlight' face and shows STR as a lighter badge at BEG
+    using `pending-lighter' face.  If BEG equals END, no region is
+    highlighted; only the lighter shows.  The lighter is a visual
+    `before-string' overlay; no buffer text is inserted.  Returns a
+    TOKEN (a `pending' struct) usable with `pending-resolve',
+    `pending-cancel', and `pending-goto'.  The token is registered in
+    the global registry; query snapshots via `pending-alist' and the
+    interactive `pending-list' command.
+
+  (pending-overlay TOKEN)
+    Back-compat accessor: return the live overlay object owned by
+    TOKEN, or nil if the placeholder has been resolved or cleaned up.
+    Equivalent to `(pending-ov TOKEN)'.
+
+The 3-arg form is a thin wrapper around `pending-make' optimised
+for the common visual-badge use case."
+  (cond
+   ;; Accessor form: 1 arg, must be a pending struct.
+   ((and (null end) (null str))
+    (pending-ov beg-or-token))
+   ;; Constructor form: 3 args, BEG is integer/marker.
+   (t
+    (pending-make (current-buffer)
+                  :start beg-or-token
+                  :end end
+                  :label str
+                  :indicator :lighter
+                  :face 'pending-highlight))))
+
+;;;###autoload
+(defun pending-insert (pos str)
+  "Mark POS as pending insertion of asynchronously-computed text.
+Shows STR as a lighter badge at POS using `pending-lighter' face.
+No region is highlighted (BEG = END).
+
+Returns a TOKEN usable with `pending-resolve', `pending-cancel',
+and `pending-goto'.  When eventually resolved with text via
+`pending-resolve', the text is inserted at POS."
+  (pending-overlay pos pos str))
+
+(defun pending-alist ()
+  "Return an alist snapshot of all currently registered pending placeholders.
+Each element is (ID . PENDING-STRUCT).  Order is unspecified.
+
+This is a fresh list; mutating the alist does not affect the
+underlying registry.  Use the API functions (`pending-resolve',
+`pending-cancel', `pending-goto') to operate on tokens."
+  (let (result)
+    (maphash
+     (lambda (id p) (push (cons id p) result))
+     pending--registry)
+    result))
+
+(defun pending--read-token (prompt)
+  "Read a pending token via `completing-read' with PROMPT.
+Each completion candidate is a human-readable summary of one
+registered placeholder; the matching value is the placeholder
+struct itself.  Signals a `user-error' when no placeholders
+are registered."
+  (let* ((alist (pending-alist))
+         (choices
+          (mapcar
+           (lambda (entry)
+             (let* ((p (cdr entry))
+                    (label (or (pending-label p) ""))
+                    (key (format "%s [%s] %s"
+                                 (symbol-name (car entry))
+                                 (or (and (buffer-live-p (pending-buffer p))
+                                          (buffer-name (pending-buffer p)))
+                                     "<dead>")
+                                 label)))
+               (cons key p)))
+           alist)))
+    (unless choices
+      (user-error "No pending placeholders registered"))
+    (cdr (assoc (completing-read prompt choices nil t) choices))))
+
+;;;###autoload
+(defun pending-goto (token)
+  "Move point to the buffer position of TOKEN.
+TOKEN is a `pending' struct as returned by `pending-overlay' or
+`pending-insert'.  Switches to TOKEN's buffer if it is not already
+current.  Signals a `user-error' if the buffer is dead.
+
+Interactively, prompt with `completing-read' over the registered
+placeholders."
+  (interactive
+   (list (pending--read-token "Goto pending: ")))
+  (let ((buf (pending-buffer token)))
+    (unless (buffer-live-p buf)
+      (user-error "Pending token's buffer is dead"))
+    (pop-to-buffer-same-window buf)
+    (when (and (markerp (pending-start token))
+               (marker-position (pending-start token)))
+      (goto-char (pending-start token)))))
 
 
 ;;; Public API: terminal transitions
@@ -1175,7 +1287,7 @@ CHUNK must be a string; an empty string is a no-op.  Signals
           ;; Without this, the overlay would still cover only the
           ;; original [start, end] and edits inside the streamed
           ;; region would not be detected.
-          (let ((ov (pending-overlay p)))
+          (let ((ov (pending-ov p)))
             (when (and (overlayp ov) (overlay-buffer ov))
               (move-overlay ov
                             (marker-position (pending-start p))
@@ -1233,13 +1345,13 @@ is logged."
           ;; Strip animated overlay decorations, then delete the
           ;; overlay so the resolved text no longer carries any
           ;; placeholder-specific properties.
-          (let ((ov (pending-overlay p)))
+          (let ((ov (pending-ov p)))
             (when (and (overlayp ov) (overlay-buffer ov))
               (overlay-put ov 'before-string nil)
               (overlay-put ov 'after-string nil)
               (delete-overlay ov)))))
       ;; Always run lifecycle bookkeeping, even if the buffer died.
-      (setf (pending-overlay p) nil
+      (setf (pending-ov p) nil
             (pending-status p) :resolved
             (pending-resolved-at p) (float-time))
       (pending--unregister p)
