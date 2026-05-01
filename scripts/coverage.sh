@@ -54,10 +54,15 @@ if [ -f coverage.lcov ]; then
     echo "coverage: REGRESSION ($PCT% < baseline $BASELINE%)" >&2
     exit 1
   fi
-  # Update baseline if improved.
+  # The baseline is intentionally NOT auto-raised on improvement.
+  # Local Mac runs see SVG/graphical paths that CI Ubuntu doesn't,
+  # so the local PCT is consistently a few points higher than CI's.
+  # Auto-bumping caused a ratchet where every local run pushed the
+  # baseline above CI's reach, and the next CI green became red.
+  # To raise the baseline manually, edit `.coverage-baseline`
+  # (single integer percent) and commit alongside the change.
   if [ "$PCT" -gt "$BASELINE" ]; then
-    echo "$PCT" >"$BASELINE_FILE"
-    echo "coverage: baseline raised to $PCT%"
+    echo "coverage: $PCT% > baseline $BASELINE% (manual bump if intended)"
   fi
 else
   echo "coverage: no coverage.lcov produced" >&2
