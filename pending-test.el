@@ -87,6 +87,96 @@ timer is cancelled on exit so it cannot fire after BODY returns."
        (when (timerp pending--global-timer)
          (cancel-timer pending--global-timer)))))
 
+(defvar pending-test--clock 0.0
+  "Mocked wall-clock value for `pending-test--with-mocked-time'.
+Bound by the macro to a fresh float per BODY; advanced by
+`pending-test--advance'.")
+
+(defvar pending-test--scheduled nil
+  "List of pending mocked timer entries.
+Each entry is `(COOKIE DUE FN ARGS)': COOKIE is a unique cons
+identifying the entry by `eq', DUE is the `float-time' at which
+the timer fires, FN is the callback, ARGS is the argument list.
+The list is mutated by `run-at-time' (push), `cancel-timer'
+\(remove), and `pending-test--advance' (drain due entries).")
+
+(defmacro pending-test--with-mocked-time (&rest body)
+  "Run BODY with `current-time' / `float-time' / `run-at-time' mocked.
+Inside BODY:
+- `(float-time)' returns `pending-test--clock' (a let-bound
+   float).
+- `pending-test--advance SECONDS' advances the clock and fires
+   any due timers.
+- `run-at-time' adds entries to `pending-test--scheduled' but
+   does not actually schedule any real Emacs timer.
+- `cancel-timer' removes mock-timer entries by identity.
+- `timerp' recognises mock-timer cookies.
+
+Useful for testing deadline expiry, ETA fraction, and spinner
+frame index without burning real wall-time on `sit-for' loops.
+Real timers (e.g. animation `run-with-timer' from
+`pending--ensure-timer') are NOT mocked --- they go through the
+unmocked `run-with-timer' inside the let-binding.  Tests that
+need the animation timer mocked should call `pending--ensure-
+timer' inside BODY and rely on the mocked `run-at-time'."
+  (declare (indent 0) (debug t))
+  `(let ((pending-test--clock 0.0)
+         (pending-test--scheduled nil))
+     (cl-letf*
+         (((symbol-function 'float-time)
+           (lambda (&optional _) pending-test--clock))
+          ((symbol-function 'run-at-time)
+           (lambda (when _repeat fn &rest args)
+             (let ((due (cond ((numberp when)
+                               (+ pending-test--clock when))
+                              ((stringp when)
+                               pending-test--clock)
+                              (t pending-test--clock)))
+                   (cookie (cons 'pending-test--mock-timer
+                                 (cl-incf pending-test--next-mock-timer))))
+               (push (list cookie due fn args) pending-test--scheduled)
+               cookie)))
+          ((symbol-function 'cancel-timer)
+           (lambda (tm)
+             (setq pending-test--scheduled
+                   (cl-remove tm pending-test--scheduled
+                              :key #'car :test #'eq))))
+          ((symbol-function 'timerp)
+           (lambda (x)
+             (and (consp x) (eq (car-safe x) 'pending-test--mock-timer)))))
+       ,@body)))
+
+(defvar pending-test--next-mock-timer 0
+  "Monotonic counter used to make mock-timer cookies distinct by `eq'.")
+
+(defun pending-test--advance (seconds)
+  "Advance the mocked clock by SECONDS and fire any due timers.
+Timers are fired in chronological order.  A timer that schedules
+another timer via `run-at-time' is honoured: the new entry is
+added to `pending-test--scheduled' and will fire if its due time
+falls within the remaining advance window.
+
+Must be called inside `pending-test--with-mocked-time'."
+  (let ((target (+ pending-test--clock seconds)))
+    (catch 'done
+      (while t
+        ;; Find the entry with the earliest due time that is still
+        ;; within the advance window.
+        (let* ((due-now (cl-remove-if-not
+                         (lambda (entry) (<= (cadr entry) target))
+                         pending-test--scheduled))
+               (next (and due-now
+                          (car (sort due-now
+                                     (lambda (a b)
+                                       (< (cadr a) (cadr b))))))))
+          (unless next (throw 'done nil))
+          (setq pending-test--scheduled
+                (cl-remove next pending-test--scheduled
+                           :key #'car :test #'eq))
+          (setq pending-test--clock (cadr next))
+          (apply (caddr next) (cadddr next)))))
+    (setq pending-test--clock target)))
+
 
 ;;; Phase 1 carry-over tests
 
@@ -320,15 +410,19 @@ the placeholder lifecycle is otherwise normal."
             (should (equal (buffer-string) "Before:ADOPTED:After"))))))))
 
 (ert-deftest pending-test/deadline-rejects-timed-out ()
-  "A short deadline auto-rejects the placeholder with `:timed-out'."
+  "Deadline timer rejects an active placeholder with `:timed-out'.
+Uses `pending-test--with-mocked-time' so the test is
+deterministic and does not burn real wall-clock time on a
+`sit-for' loop."
   (pending-test--with-fresh-registry
-    (pending-test--with-buffer (buf "*pending-test/deadline*")
-      (with-current-buffer buf
-        (let ((p (pending-make buf :label "X" :deadline 0.05)))
-          ;; `sit-for' processes timers; `sleep-for' does not.
-          (sit-for 0.2)
-          (should (eq (pending-status p) :rejected))
-          (should (eq (pending-reason p) :timed-out)))))))
+    (pending-test--with-mocked-time
+      (pending-test--with-buffer (buf "*pending-test/deadline*")
+        (with-current-buffer buf
+          (let ((p (pending-make buf :label "X" :deadline 0.05)))
+            (should (eq (pending-status p) :scheduled))
+            (pending-test--advance 0.1)
+            (should (eq (pending-status p) :rejected))
+            (should (eq (pending-reason p) :timed-out))))))))
 
 
 ;;; Phase 2 — re-entrancy and on-resolve coverage
@@ -1705,6 +1799,49 @@ returns the same string by `eq'."
       (should (= 2 (hash-table-count pending--svg-cache)))
       ;; Same key returns the same `eq' value (cached, not regenerated).
       (should (eq s1 s1b)))))
+
+
+;;; v0.2 — mocked-time helpers
+
+(ert-deftest pending-test/mocked-time-eta-fraction ()
+  "ETA fraction reaches 0.5 at half the estimated time.
+With `float-time' mocked to a known value, `pending--eta-
+fraction' returns the deterministic checkpoint without any
+wall-clock dependency."
+  (pending-test--with-mocked-time
+    (setq pending-test--clock 100.0)
+    ;; start-time = 100, eta = 8s, now = 104 (4s elapsed = half).
+    (should (= 0.5 (pending--eta-fraction 100.0 8.0 104.0)))))
+
+(ert-deftest pending-test/mocked-time-spinner-frame ()
+  "Spinner frame index advances based on mocked elapsed time.
+With `pending-fps' = 10 and 0.5s elapsed, the index lands at
+frame 5 modulo the frames-vector length."
+  (pending-test--with-mocked-time
+    (let* ((p (pending--make-struct :id 'mt
+                                    :start-time 100.0
+                                    :spinner-style 'dots-1))
+           (frames (pending--get-frames 'dots-1)))
+      (setq pending-test--clock 100.5)        ; 0.5 s elapsed
+      ;; At 10 fps, 0.5s = 5 frames.
+      (should (= (mod 5 (length frames))
+                 (pending--frame-index p frames))))))
+
+(ert-deftest pending-test/mocked-time-deadline-not-fired-yet ()
+  "Advancing under the deadline does NOT fire the rejection timer.
+Sanity check on the mocked-time fixture: a 0.1s advance against a
+1.0s deadline must leave the placeholder active."
+  (pending-test--with-fresh-registry
+    (pending-test--with-mocked-time
+      (pending-test--with-buffer (buf "*p-mt-deadline-pending*")
+        (with-current-buffer buf
+          (let ((p (pending-make buf :label "X" :deadline 1.0)))
+            (pending-test--advance 0.1)
+            (should (eq (pending-status p) :scheduled))
+            ;; Advance the rest of the way to fire the deadline timer.
+            (pending-test--advance 1.0)
+            (should (eq (pending-status p) :rejected))
+            (should (eq (pending-reason p) :timed-out))))))))
 
 
 ;;; v0.2 — adopted-region read-only projection
