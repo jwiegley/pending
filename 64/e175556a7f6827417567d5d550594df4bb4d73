@@ -1,0 +1,23 @@
+flake.nix
+  2046fa0cf43c79ba 96-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "64e175556a7f6827417567d5d550594df4bb4d73",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 0,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    }
+  }
+}
