@@ -607,6 +607,12 @@ The lighter is propertized with `pending-spinner-face`, carries a
 help-echo tooltip, and binds `mouse-1` to `pending-list` so a click
 opens the list buffer.
 
+The construct calls `pending-mode-line-string` on each redisplay
+to compute the live text. Callers wiring the lighter into a custom
+mode-line construct directly can use that function; it returns nil
+when no placeholders are active so the segment disappears
+naturally.
+
 ```elisp
 (global-pending-lighter-mode 1)
 ```
@@ -672,6 +678,9 @@ Bindings inside the description buffer:
 | `pending-allow-read-only`         | `nil`        | When non-nil, placeholders may be placed in read-only buffers.          |
 | `pending-label-max-width`         | `60`         | Maximum visible label width; longer labels are truncated.               |
 | `pending-confirm-on-emacs-exit`   | `nil`        | When non-nil, prompt before exit while placeholders are active.         |
+| `pending-list-auto-refresh`       | `t`          | When non-nil, debounce-refresh the `*Pending*` list buffer on registry mutation. |
+| `pending-pulse-on-resolve`        | `t`          | When non-nil, briefly flash the resolved region via `pulse.el` on `:resolved`. |
+| `pending-fringe-bitmap`           | `nil`        | Symbol naming a registered fringe bitmap to render as a left-fringe cue beside each placeholder; nil disables. |
 | `pending-svg-spinner-enable`      | `t`          | On graphical frames with SVG support, render the spinner as an SVG.    |
 | `pending-svg-spinner-size`        | `16`         | Pixel size of the SVG spinner image (square).                          |
 | `pending-protect-adopted-region`  | `t`          | In adopt mode, freeze the existing region with read-only text properties (which project into indirect buffers). |
