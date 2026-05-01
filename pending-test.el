@@ -1924,18 +1924,25 @@ gate forces the Unicode fallback."
                                  (eq (car display) 'image)))))))))))
 
 (ert-deftest pending-test/svg-cached-key-distinct-by-frame ()
-  "The SVG cache memoizes per (FACE STYLE FRAME-INDEX SIZE) key.
+  "The SVG cache memoizes per (FACE STYLE FRAME-INDEX FRAMES-COUNT SIZE) key.
 Two distinct frame indices populate two distinct entries; the
 second call to `pending--svg-cached' for an already-cached key
-returns the same string by `eq'."
+returns the same string by `eq'.  A different FRAMES-COUNT value
+on the same FRAME-INDEX is a distinct entry as well — the
+rotation angle depends on both."
   (skip-unless (image-type-available-p 'svg))
   (let ((pending--svg-cache (make-hash-table :test 'equal)))
     (let ((s1 (pending--svg-cached 0 8 'dots-1 'pending-spinner-face 16))
           (s2 (pending--svg-cached 1 8 'dots-1 'pending-spinner-face 16))
-          (s1b (pending--svg-cached 0 8 'dots-1 'pending-spinner-face 16)))
+          (s1b (pending--svg-cached 0 8 'dots-1 'pending-spinner-face 16))
+          (s3 (pending--svg-cached 0 6 'dots-1 'pending-spinner-face 16)))
       (should (stringp s1))
       (should (stringp s2))
-      (should (= 2 (hash-table-count pending--svg-cache)))
+      (should (stringp s3))
+      ;; FRAMES-COUNT in the key prevents collision between
+      ;; (frame-index 0, frames-count 8) and (frame-index 0,
+      ;; frames-count 6) — they describe different rotations.
+      (should (= 3 (hash-table-count pending--svg-cache)))
       ;; Same key returns the same `eq' value (cached, not regenerated).
       (should (eq s1 s1b)))))
 

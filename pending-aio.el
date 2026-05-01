@@ -46,7 +46,6 @@
 (require 'pending)
 (require 'aio)
 
-;;;###autoload
 (defun pending-as-promise (token)
   "Return an `aio-promise' that resolves when TOKEN reaches a terminal state.
 The promise resolves with TOKEN itself, so the caller can read

@@ -797,11 +797,14 @@ of some live frame."
 
 (defvar pending--svg-cache (make-hash-table :test 'equal)
   "Cache of generated SVG spinner image strings.
-Keyed on (FACE STYLE FRAME-INDEX SIZE) tuples, value is a
-propertized one-character string whose `display' property is the
-SVG image returned by `svg-image'.  Bounded by N styles M frames
-K faces SIZE values, all small.  Cleared by the `:set' on
-`pending-svg-spinner-size'.")
+Keyed on (FACE STYLE FRAME-INDEX FRAMES-COUNT SIZE) tuples; the
+value is a propertized one-character string whose `display'
+property is the SVG image returned by `svg-image'.  FRAMES-COUNT
+is part of the key because the rotation angle is computed as
+\\=`(/ frame-index frames-count)' — a frame-index of 2 has
+different geometry under a 6-frame and an 8-frame style.
+Bounded by N styles M frames K faces SIZE values, all small.
+Cleared by the `:set' on `pending-svg-spinner-size'.")
 
 (defun pending--svg-spinner (frame-index frames-count face size)
   "Build a propertized image string for the SVG spinner glyph.
@@ -847,11 +850,15 @@ animation cycle.  STYLE is the spinner style symbol (used in the
 cache key only).  FACE supplies the stroke colour.  SIZE is the
 SVG width and height in pixels.
 
-The cache key is (FACE STYLE FRAME-INDEX SIZE) so distinct styles,
-faces, sizes, and per-style rotation positions are all memoized
-independently.  See `pending--svg-spinner' for the generation
-details."
-  (let ((key (list face style frame-index size)))
+The cache key is (FACE STYLE FRAME-INDEX FRAMES-COUNT SIZE) so
+distinct styles, faces, sizes, frame counts, and per-style
+rotation positions are all memoized independently.  FRAMES-COUNT
+is included because the rotation angle is `(/ frame-index
+frames-count)' — without it, two styles sharing a `:dots-1'
+frame-index of 2 but with frame counts 6 vs 8 would collide and
+serve the wrong angle.  See `pending--svg-spinner' for the
+generation details."
+  (let ((key (list face style frame-index frames-count size)))
     (or (gethash key pending--svg-cache)
         (puthash key
                  (pending--svg-spinner frame-index frames-count face size)
@@ -1418,6 +1425,9 @@ for the common visual-badge use case."
   (cond
    ;; Accessor form: 1 arg, must be a pending struct.
    ((and (null end) (null str))
+    (unless (pending-p beg-or-token)
+      (signal 'pending-error
+              (list "expected a pending token" beg-or-token)))
     (pending-ov beg-or-token))
    ;; Constructor form: 3 args, BEG is integer/marker.
    (t
@@ -2322,10 +2332,17 @@ relying on structural equality of freshly-consed lists.")
 When enabled, append `pending--mode-line-construct' (an `:eval' form
 that calls `pending-mode-line-string') to `global-mode-string', so the
 lighter automatically updates each redisplay.  When disabled, remove
-that construct via `delq' on its identity."
+that construct via `delq' on its identity.
+
+`global-mode-string' is documented as either nil, a string, or a
+list of mode-line constructs; this toggle wraps the non-list-string
+shape into a one-element list before appending so we do not break
+that invariant."
   :global t
   :group 'pending
   :lighter nil
+  (when (and global-mode-string (not (listp global-mode-string)))
+    (setq global-mode-string (list global-mode-string)))
   (if global-pending-lighter-mode
       (unless (memq pending--mode-line-construct global-mode-string)
         (setq global-mode-string

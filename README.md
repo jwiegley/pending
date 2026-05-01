@@ -851,6 +851,8 @@ Landed in v0.2.0:
   `pending-protect-adopted-region`).
 - `pending-as-promise` adapter for `aio` users (optional add-on
   in `pending-aio.el`).
+- `pending-test--with-mocked-time` macro for deterministic
+  fast-forward testing.
 
 Still on the roadmap:
 
