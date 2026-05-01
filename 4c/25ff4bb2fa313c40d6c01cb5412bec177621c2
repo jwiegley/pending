@@ -1,0 +1,29 @@
+.coverage-baseline
+  2046fa0cf43c79ba 1
+pending.el
+  2046fa0cf43c79ba 213-226,468-498,514-516,547-570,1479-1481,1490-1493,1520-1523
+pending-test.el
+  2046fa0cf43c79ba 1437-1540
+.perf-baseline
+  2046fa0cf43c79ba 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "4c25ff4bb2fa313c40d6c01cb5412bec177621c2",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 204,
+      "total_deletions": 28,
+      "accepted_lines": 192,
+      "overriden_lines": 0
+    }
+  }
+}
