@@ -239,6 +239,32 @@ This is purely decorative and only renders in graphical frames
   :group 'pending
   :package-version '(pending . "0.2.0"))
 
+(defcustom pending-svg-spinner-enable t
+  "If non-nil, render spinners as SVG images on graphical frames.
+When t and the frame supports SVG (`image-type-available-p' \\='svg)
+and `display-graphic-p' is non-nil, `pending--render' renders the
+spinner glyph as a small SVG arc-rotation image instead of the
+Unicode text glyph.  Falls back to Unicode automatically on TTY
+or when SVG support is unavailable."
+  :type 'boolean
+  :group 'pending
+  :package-version '(pending . "0.2.0"))
+
+(defcustom pending-svg-spinner-size 16
+  "Pixel size of the SVG spinner image.
+Width and height; the SVG is square.  Changing this value clears
+the SVG cache so the next render regenerates images at the new
+size."
+  :type '(integer :tag "Pixels"
+                  :match (lambda (_ v) (and (integerp v) (> v 0))))
+  :set (lambda (sym val)
+         (set-default sym val)
+         (when (and (boundp 'pending--svg-cache)
+                    (hash-table-p pending--svg-cache))
+           (clrhash pending--svg-cache)))
+  :group 'pending
+  :package-version '(pending . "0.2.0"))
+
 
 ;;; Faces
 
@@ -702,6 +728,82 @@ of some live frame."
               (get-buffer-window buf 'visible)))))
 
 
+;;; SVG spinner (graphical frames only)
+
+;; `svg.el' is loaded lazily inside `pending--svg-spinner' so callers
+;; that disable the SVG path (via `pending-svg-spinner-enable' nil or
+;; on TTY) never pull the library in.  The byte compiler still wants
+;; to know these symbols exist.
+(declare-function svg-create "svg" (width height &rest args))
+(declare-function svg-circle "svg" (svg x y radius &rest args))
+(declare-function svg-image  "svg" (svg &rest props))
+
+(defvar pending--svg-cache (make-hash-table :test 'equal)
+  "Cache of generated SVG spinner image strings.
+Keyed on (FACE STYLE FRAME-INDEX SIZE) tuples, value is a
+propertized one-character string whose `display' property is the
+SVG image returned by `svg-image'.  Bounded by N styles M frames
+K faces SIZE values, all small.  Cleared by the `:set' on
+`pending-svg-spinner-size'.")
+
+(defun pending--svg-spinner (frame-index frames-count face size)
+  "Build a propertized image string for the SVG spinner glyph.
+FRAME-INDEX selects the rotation angle (0..FRAMES-COUNT-1).
+FRAMES-COUNT is the number of equally-spaced rotations.  FACE
+contributes the stroke color (its foreground; falls back to the
+`default' face's foreground, then to `currentColor').  SIZE is
+the SVG width and height in pixels.
+
+The returned value is a one-character string whose `display'
+property is the SVG image, with `:ascent center' so it sits on
+the text baseline correctly."
+  (require 'svg)
+  (let* ((angle (if (and (integerp frames-count) (> frames-count 0))
+                    (* (/ 360.0 frames-count) frame-index)
+                  0.0))
+         (svg (svg-create size size))
+         (cx (/ size 2.0))
+         (cy (/ size 2.0))
+         (radius (* size 0.35))
+         (color (or (face-foreground face nil 'default) "currentColor"))
+         ;; ~25% of the ring is the visible arc; the rest is the gap.
+         ;; Compute as circumference fractions in user units.
+         (circumference (* 2 float-pi radius))
+         (dash-arc (* circumference 0.25))
+         (gap-arc  (* circumference 0.75)))
+    ;; Background ring at low opacity for visual stability.
+    (svg-circle svg cx cy radius
+                :stroke color :stroke-width 2 :fill "none"
+                :opacity 0.25)
+    ;; Foreground arc rotating clockwise.
+    (svg-circle svg cx cy radius
+                :stroke color :stroke-width 2 :fill "none"
+                :stroke-dasharray (format "%.2f %.2f" dash-arc gap-arc)
+                :transform (format "rotate(%.2f %.2f %.2f)" angle cx cy))
+    (propertize " " 'display (svg-image svg :ascent 'center))))
+
+(defun pending--svg-cached (frame-index frames-count style face size)
+  "Return a cached SVG spinner string, creating it if absent.
+The cache key is (FACE STYLE FRAME-INDEX SIZE) so distinct styles,
+faces, sizes, and per-style rotation positions are all
+memoized independently.  See `pending--svg-spinner' for the
+generation details."
+  (let ((key (list face style frame-index size)))
+    (or (gethash key pending--svg-cache)
+        (puthash key
+                 (pending--svg-spinner frame-index frames-count face size)
+                 pending--svg-cache))))
+
+(defun pending--svg-spinner-available-p ()
+  "Return non-nil if the SVG spinner path should run.
+True when the user has not disabled it via
+`pending-svg-spinner-enable', the current frame is graphical, and
+SVG image support is compiled into Emacs."
+  (and pending-svg-spinner-enable
+       (display-graphic-p)
+       (image-type-available-p 'svg)))
+
+
 ;;; Progress bar rendering (Phase 4)
 
 (defconst pending--bar-blocks-eighths
@@ -839,14 +941,24 @@ no animation cost is paid; the badge is rendered once below."
       ;; `:lighter', which uses a static badge in `before-string' below
       ;; and must not have its frame index advanced.
       (unless (eq indicator :lighter)
-        (let* ((frames (pending--get-frames
-                        (or (pending-spinner-style p)
-                            pending-default-spinner-style)))
+        (let* ((style (or (pending-spinner-style p)
+                          pending-default-spinner-style))
+               (frames (pending--get-frames style))
                (frame (pending--frame-index p frames)))
           (unless (eql frame (pending-last-frame p))
-            (let* ((glyph (aref frames frame))
-                   (glyph-str (propertize (concat glyph " ")
-                                          'face 'pending-spinner-face)))
+            (let ((glyph-str
+                   (if (pending--svg-spinner-available-p)
+                       ;; SVG image string (one-character propertized
+                       ;; space whose `display' is the SVG image).  No
+                       ;; trailing space — the image already occupies
+                       ;; visual width.
+                       (pending--svg-cached
+                        frame (length frames) style
+                        'pending-spinner-face
+                        pending-svg-spinner-size)
+                     ;; Unicode text glyph (the v0.1 fallback).
+                     (propertize (concat (aref frames frame) " ")
+                                 'face 'pending-spinner-face))))
               (overlay-put
                ov 'before-string
                (if fringe (concat fringe glyph-str) glyph-str)))

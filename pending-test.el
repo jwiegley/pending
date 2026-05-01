@@ -1623,6 +1623,88 @@ the fringe display proxy and is followed by the spinner glyph."
               (should (string-match-p "static" bs)))))))))
 
 
+;;; v0.2 — SVG spinner
+
+(ert-deftest pending-test/svg-spinner-used-when-graphic ()
+  "When graphic + SVG available, spinner before-string contains an image.
+The image string is a propertized one-character space whose
+`display' property is the SVG image returned by `svg-image'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-svg-1*")
+      (with-current-buffer buf
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda () t))
+                  ((symbol-function 'image-type-available-p)
+                   (lambda (sym) (or (eq sym 'svg) t)))
+                  ((symbol-function 'get-buffer-window) (lambda (&rest _) t)))
+          (let* ((p (pending-make buf :label "X"))
+                 (pending-svg-spinner-enable t))
+            (pending--tick)
+            (let ((bs (overlay-get (pending-ov p) 'before-string)))
+              (should bs)
+              (should (stringp bs))
+              ;; The display property carries an image specification.
+              (let ((display (get-text-property 0 'display bs)))
+                (should (consp display))
+                (should (eq (car display) 'image))))))))))
+
+(ert-deftest pending-test/svg-spinner-fallback-to-text ()
+  "Without graphic support, spinner before-string is the text glyph.
+The Unicode glyph + space form survives — no `image' display
+property in the leading character."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-svg-2*")
+      (with-current-buffer buf
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda () nil))
+                  ((symbol-function 'get-buffer-window) (lambda (&rest _) t)))
+          (let* ((p (pending-make buf :label "X"))
+                 (pending-svg-spinner-enable t))
+            (pending--tick)
+            (let ((bs (overlay-get (pending-ov p) 'before-string)))
+              (should bs)
+              (should (stringp bs))
+              ;; No image — the leading character has no `image' display.
+              (let ((display (get-text-property 0 'display bs)))
+                (should-not (and (consp display)
+                                 (eq (car display) 'image)))))))))))
+
+(ert-deftest pending-test/svg-spinner-disabled-by-defcustom ()
+  "`pending-svg-spinner-enable' nil forces text glyph even on graphic.
+Stubs simulate a graphical SVG-capable frame, but the defcustom
+gate forces the Unicode fallback."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-svg-3*")
+      (with-current-buffer buf
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda () t))
+                  ((symbol-function 'image-type-available-p) (lambda (_) t))
+                  ((symbol-function 'get-buffer-window) (lambda (&rest _) t)))
+          (let* ((p (pending-make buf :label "X"))
+                 (pending-svg-spinner-enable nil))
+            (pending--tick)
+            (let ((bs (overlay-get (pending-ov p) 'before-string)))
+              (should bs)
+              (should (stringp bs))
+              ;; Without SVG enabled, the leading character is the
+              ;; spinner glyph, not an image.
+              (let ((display (get-text-property 0 'display bs)))
+                (should-not (and (consp display)
+                                 (eq (car display) 'image)))))))))))
+
+(ert-deftest pending-test/svg-cached-key-distinct-by-frame ()
+  "The SVG cache memoizes per (FACE STYLE FRAME-INDEX SIZE) key.
+Two distinct frame indices populate two distinct entries; the
+second call to `pending--svg-cached' for an already-cached key
+returns the same string by `eq'."
+  (let ((pending--svg-cache (make-hash-table :test 'equal)))
+    (let ((s1 (pending--svg-cached 0 8 'dots-1 'pending-spinner-face 16))
+          (s2 (pending--svg-cached 1 8 'dots-1 'pending-spinner-face 16))
+          (s1b (pending--svg-cached 0 8 'dots-1 'pending-spinner-face 16)))
+      (should (stringp s1))
+      (should (stringp s2))
+      (should (= 2 (hash-table-count pending--svg-cache)))
+      ;; Same key returns the same `eq' value (cached, not regenerated).
+      (should (eq s1 s1b)))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here
