@@ -86,10 +86,10 @@ pleasant for end users:
      torn intermediate states, no partial-edit history pollution.
 
 *Edit-survival*
-     While pending, the placeholder text is read-only.  Surrounding
-     edits adjust the placeholder's markers automatically; if the user
-     deletes the region outright, the placeholder cancels itself rather
-     than resolving into deleted space.
+     While the placeholder is active, its text is read-only.
+     Surrounding edits adjust the placeholder's markers automatically;
+     if the user deletes the region outright, the placeholder cancels
+     itself rather than resolving into deleted space.
 
 *Backend-agnostic*
      The library does not commit to any particular async pattern; it
@@ -97,7 +97,7 @@ pleasant for end users:
      with ‘gptel’, ‘make-process’, ‘url-retrieve’, plain timers, or your
      own callback-driven pattern.
 
-   A single global animation timer drives all in-flight placeholders, so
+   A single global animation timer drives all active placeholders, so
 spinning N concurrent regions costs only N overlay decorations per tick,
 not N timers.
 
@@ -166,7 +166,7 @@ pending, then atomically replace it when the answer arrives.
 Place the cursor on a placeholder and run ‘M-x pending-cancel-at-point’.
 The placeholder's overlay also binds ‘RET’ and ‘mouse-1’ to the same
 command via ‘pending-region-map’, so a single ‘RET’ on the highlighted
-region cancels the in-flight work.
+region cancels the active work.
 
 3.4 Show the lighter mode
 =========================
@@ -294,7 +294,7 @@ during its own operations so internal swaps still work.
 library by default applies the same read-only properties to the adopted
 text -- gated on ‘pending-protect-adopted-region’ (default t).  Set the
 option to nil to opt out and leave the adopted text editable while the
-placeholder is in flight.
+placeholder is active.
 
    A subtle benefit of the text-property-based protection over an
 overlay-based approach: text properties live in the buffer text itself
@@ -307,8 +307,8 @@ own indirect-buffer projection.
 4.5 Auto-cancellation paths
 ===========================
 
-Several edge conditions auto-cancel an in-flight placeholder so it
-cannot strand state:
+Several edge conditions auto-cancel an active placeholder so it cannot
+strand state:
 
 *Region deletion*
      If the user deletes the entire placeholder region, the overlay
@@ -508,7 +508,7 @@ bars, deadlines, and process attachment.
                         :on-cancel (lambda (_) (gptel-abort)))
 
  -- Function: pending-update p &key label percent eta indicator
-     Mutate slots mid-flight without changing state.  Useful when the
+     Mutate slots while active without changing state.  Useful when the
      caller learns more about progress -- e.g.  switch from ‘:spinner’
      to ‘:percent’ once the total work size is known.
 
@@ -576,7 +576,7 @@ bars, deadlines, and process attachment.
      existing sentinel, if any, is preserved: it runs first, then a
      wrapper inspects ‘process-status’ and calls ‘pending-reject’ on
      non-clean exit.  The reason is derived from the live process
-     status, which is robust against localized event strings.
+     status, which survives localized event strings.
 
      Behaviour by status:
 
@@ -1043,7 +1043,7 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      If non-nil (the default), an adopted-mode placeholder freezes its
      existing region's text via ‘read-only’, ‘front-sticky’, and
      ‘rear-nonsticky’ text properties on the buffer text.  Set to nil to
-     leave the adopted text editable while the placeholder is in flight
+     leave the adopted text editable while the placeholder is active
      (the v0.1.0 behaviour, which relied on the overlay's
      modification-hooks alone).
 
@@ -1505,24 +1505,24 @@ Index
 Tag Table:
 Node: Top517
 Node: Introduction2024
-Node: Installation3937
-Node: Quick start4849
-Node: Concepts6150
-Node: Simple API12137
-Node: Rich API16724
-Node: Indicator modes25084
-Node: Integrations27329
-Node: Promise adapter31808
-Node: Interactive UI33535
-Node: Mode-line lighter36428
-Node: Customization37425
-Node: Hooks and callbacks45712
-Node: Comparison47850
-Node: Caveats50323
-Node: Roadmap51499
-Node: Development52660
-Node: License54354
-Node: Index54674
+Node: Installation3939
+Node: Quick start4851
+Node: Concepts6149
+Node: Simple API12130
+Node: Rich API16717
+Node: Indicator modes25070
+Node: Integrations27315
+Node: Promise adapter31794
+Node: Interactive UI33521
+Node: Mode-line lighter36414
+Node: Customization37411
+Node: Hooks and callbacks45695
+Node: Comparison47833
+Node: Caveats50306
+Node: Roadmap51482
+Node: Development52643
+Node: License54337
+Node: Index54657
 
 End Tag Table
 
