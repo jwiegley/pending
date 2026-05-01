@@ -1770,10 +1770,11 @@ carries a `help-echo' tooltip describing the count, and binds
                      (delq nil
                            (mapcar
                             (lambda (p)
-                              (when-let* ((eta (pending-eta p))
-                                          (st  (pending-start-time p)))
-                                (let ((rem (- eta (- (float-time) st))))
-                                  (and (> rem 0) rem))))
+                              (let ((eta (pending-eta p))
+                                    (st  (pending-start-time p)))
+                                (when (and eta st)
+                                  (let ((rem (- eta (- (float-time) st))))
+                                    (and (> rem 0) rem)))))
                             actives))))
                 (when rems (apply #'min rems))))
              (eta-text (if next-eta

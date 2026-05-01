@@ -17,11 +17,24 @@ export UNDERCOVER_FORCE=true
 # undercover doesn't try (and fail) to merge.
 rm -f pending.elc pending-test.elc coverage.lcov
 
-emacs --batch -L . \
-  --eval "(require 'package)" \
-  --eval "(package-initialize)" \
+# Pick an Emacs invocation that can resolve `undercover':
+# - In CI (after `eask install-deps --dev`), undercover lives in
+#   .eask/<emacs-version>/elpa/, which `eask emacs --batch` adds to
+#   the load-path automatically.
+# - In Nix derivations / `nix develop`, `emacsWithPackages` bundles
+#   undercover in the system load-path, so plain `emacs --batch`
+#   with `-L .` works.
+# Plain `emacs` + `(package-initialize)` only finds packages installed
+# under ~/.emacs.d/elpa, which is wrong in both environments above.
+EMACS_INVOKE=(emacs --batch -L .)
+if command -v eask >/dev/null 2>&1 && [ -d .eask ]; then
+  EMACS_INVOKE=(eask emacs --batch -L .)
+fi
+
+"${EMACS_INVOKE[@]}" \
   --eval "(require 'undercover)" \
   --eval "(undercover \"pending.el\" (:report-file \"./coverage.lcov\") (:report-format 'lcov) (:send-report nil))" \
+  --eval "(load (expand-file-name \"pending.el\") nil t t)" \
   -l pending-test.el \
   -f ert-run-tests-batch-and-exit
 
