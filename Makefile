@@ -44,8 +44,12 @@ clean: clean-docs
 # (Elisp has no canonical formatter; we enforce reproducible indent-region
 # with spaces. Each file is loaded first so its `defmacro' forms with
 # `(declare (indent ...))' register before we re-indent.)
+# `enable-local-variables' / `enable-local-eval' are disabled so a
+# malicious file-local form cannot execute arbitrary code under our
+# format target.
 format:
-	$(EMACS_BATCH) --eval "(setq-default indent-tabs-mode nil)" \
+	$(EMACS_BATCH) --eval "(setq enable-local-variables nil enable-local-eval nil)" \
+	  --eval "(setq-default indent-tabs-mode nil)" \
 	  --eval "(load \"./pending.el\" nil t)" \
 	  --eval "(load \"./pending-test.el\" nil t)" \
 	  --eval "(dolist (f (directory-files \".\" t \"\\\\.el\\\\'\")) (find-file f) (emacs-lisp-mode) (setq indent-tabs-mode nil) (let ((inhibit-message t)) (indent-region (point-min) (point-max))) (when (buffer-modified-p) (save-buffer)))"

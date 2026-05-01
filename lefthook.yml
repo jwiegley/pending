@@ -21,12 +21,16 @@ pre-commit:
       glob: "*.el"
       run: |
         load-env-emacs30MacPort emacs --batch \
+          --eval '(setq enable-local-variables nil enable-local-eval nil)' \
           --eval '(progn (find-file "pending.el") (checkdoc-current-buffer t) (princ "DONE"))'
         load-env-emacs30MacPort emacs --batch \
+          --eval '(setq enable-local-variables nil enable-local-eval nil)' \
           --eval '(progn (find-file "pending-aio.el") (checkdoc-current-buffer t) (princ "DONE"))'
         load-env-emacs30MacPort emacs --batch \
+          --eval '(setq enable-local-variables nil enable-local-eval nil)' \
           --eval '(progn (find-file "pending-test.el") (checkdoc-current-buffer t) (princ "DONE"))'
         load-env-emacs30MacPort emacs --batch \
+          --eval '(setq enable-local-variables nil enable-local-eval nil)' \
           --eval '(progn (find-file "pending-aio-test.el") (checkdoc-current-buffer t) (princ "DONE"))'
 
     docs-build:
