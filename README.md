@@ -413,8 +413,8 @@ Wire `PROCESS` so its death rejects `P` automatically. Wraps the
 process sentinel; any caller-installed sentinel runs first, then a
 wrapper inspects `process-status` and calls `pending-reject` on
 non-clean exit. The reason is derived from the live process status,
-which is robust against localized event strings (so the test still
-works in a non-English locale).
+which survives localized event strings (so the test still works
+in a non-English locale).
 
 ```elisp
 (let ((proc (start-process "build" nil "make")))
@@ -944,7 +944,7 @@ an issue, please include:
 When sending a PR, please:
 
 - Match the existing code style: lexical binding, `--` for internal
-  symbols, comprehensive docstrings.
+  symbols, real docstrings on every public function.
 - Add ERT tests for new behaviour.
 - Ensure `eask compile` is warning-free and `eask test` is green.
 - Run `M-x checkdoc` on touched files.

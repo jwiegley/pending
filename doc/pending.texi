@@ -691,7 +691,7 @@ Wire PROCESS so its death rejects P appropriately.  The process's
 existing sentinel, if any, is preserved: it runs first, then a
 wrapper inspects @code{process-status} and calls @code{pending-reject}
 on non-clean exit.  The reason is derived from the live process
-status, which is robust against localized event strings.
+status, which survives localized event strings.
 
 Behaviour by status:
 
