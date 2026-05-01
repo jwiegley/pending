@@ -1,0 +1,33 @@
+doc/pending.texi
+  2046fa0cf43c79ba 16-18,63,1401-1402,1404-1407
+README.md
+  2046fa0cf43c79ba 13,824
+LICENSE.md
+  2046fa0cf43c79ba 1-28
+pending.el
+  2046fa0cf43c79ba 14-15
+pending-test.el
+  2046fa0cf43c79ba 9-10
+Eask
+  2046fa0cf43c79ba 8,18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "428e50f7f82d71f1cb15f865e931d00cec00088c",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 708,
+      "accepted_lines": 46,
+      "overriden_lines": 0
+    }
+  }
+}
