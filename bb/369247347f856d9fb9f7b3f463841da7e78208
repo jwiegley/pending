@@ -1,0 +1,29 @@
+PLAN.md
+  2046fa0cf43c79ba 55-56,215-216,235-236,247-248,257-284,300,302
+README.md
+  2046fa0cf43c79ba 21,797,828,830,876-877
+doc/pending.texi
+  2046fa0cf43c79ba 11,30,62,1198-1233,1445,1448-1449,1477-1482,1496,1499-1509,1511-1514,1519-1524,1543-1544
+CLAUDE.md
+  2046fa0cf43c79ba 8,15-18,43-45,241-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "bb369247347f856d9fb9f7b3f463841da7e78208",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 158,
+      "total_deletions": 105,
+      "accepted_lines": 158,
+      "overriden_lines": 0
+    }
+  }
+}
