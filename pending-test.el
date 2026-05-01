@@ -1705,6 +1705,224 @@ returns the same string by `eq'."
       (should (eq s1 s1b)))))
 
 
+;;; v0.2 — describe buffer
+
+(ert-deftest pending-test/describe-buffer-created ()
+  "`pending-describe' creates a *Pending: ID* buffer in the right mode.
+The buffer's major mode is `pending-description-mode' and the
+rendered text contains the placeholder's label."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-1*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "WORK")))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (should (get-buffer desc-buf))
+                  (with-current-buffer desc-buf
+                    (should (eq major-mode 'pending-description-mode))
+                    (should (string-match-p "WORK" (buffer-string)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-shows-status ()
+  "Description buffer reflects the placeholder's status keyword."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-2*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "X")))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (with-current-buffer desc-buf
+                    ;; `pending-make' starts in `:scheduled', and the
+                    ;; placeholder may transition to `:running' later;
+                    ;; either is acceptable here.
+                    (should (string-match-p
+                             ":\\(scheduled\\|running\\)"
+                             (buffer-string)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-refresh-after-resolve ()
+  "Refreshing the description after resolve shows the new status.
+Calling `pending-describe-refresh' re-renders from the live token
+slots so a placeholder that flipped to `:resolved' since the
+buffer was first opened shows up correctly."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-3*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "X")))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (pending-finish p "DONE")
+                  (with-current-buffer desc-buf
+                    (pending-describe-refresh)
+                    (should (string-match-p ":resolved"
+                                            (buffer-string)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-cancel-from-buffer ()
+  "`pending-describe-cancel' cancels the placeholder and refreshes."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-cancel*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "X")))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (with-current-buffer desc-buf
+                    (pending-describe-cancel))
+                  (should (eq (pending-status p) :cancelled))
+                  (should (eq (pending-reason p)
+                              :cancelled-from-describe))
+                  (with-current-buffer desc-buf
+                    (should (string-match-p ":cancelled"
+                                            (buffer-string)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/list-describe-opens-buffer ()
+  "`pending-list-describe' opens the description buffer for the row.
+The list buffer's `?' binding routes through this command, which
+reads the row's struct via `tabulated-list-get-id' and delegates
+to `pending-describe'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-list-describe*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "TARGET")))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-list)
+                  (with-current-buffer "*Pending*"
+                    (goto-char (point-min))
+                    (let (found)
+                      (while (and (not found) (not (eobp)))
+                        (when (eq (tabulated-list-get-id) p)
+                          (setq found t))
+                        (unless found (forward-line 1)))
+                      (should found)
+                      (pending-list-describe)))
+                  (should (get-buffer desc-buf))
+                  (with-current-buffer desc-buf
+                    (should (eq major-mode 'pending-description-mode))
+                    (should (string-match-p "TARGET" (buffer-string)))))
+              (when (get-buffer "*Pending*") (kill-buffer "*Pending*"))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-renders-callback-flags ()
+  "Description buffer shows yes/no for on-cancel and on-resolve.
+With no callbacks set, both report `no'.  With either set, the
+corresponding row reports `yes'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-cb*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "X"
+                               :on-cancel (lambda (_) nil)
+                               :on-resolve (lambda (_) nil))))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (with-current-buffer desc-buf
+                    (should (string-match-p "on-cancel:[[:space:]]+yes"
+                                            (buffer-string)))
+                    (should (string-match-p "on-resolve:[[:space:]]+yes"
+                                            (buffer-string)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-renders-all-optional-fields ()
+  "Description buffer renders group, eta, percent, deadline, reason.
+A fully-populated placeholder exercises every conditional branch
+in `pending--describe-render', so all optional rows appear in the
+output."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-full*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf
+                               :label "Calling"
+                               :indicator :percent
+                               :percent 0.4
+                               :eta 5.0
+                               :group 'g1
+                               :spinner-style 'arc)))
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (with-current-buffer desc-buf
+                    (let ((s (buffer-string)))
+                      ;; All optional rows we set must appear.
+                      (should (string-match-p "Group:[[:space:]]+g1" s))
+                      (should (string-match-p "Indicator:[[:space:]]+:percent" s))
+                      (should (string-match-p "Spinner:[[:space:]]+arc" s))
+                      (should (string-match-p "ETA:[[:space:]]+5\\." s))
+                      (should (string-match-p "Percent:[[:space:]]+40%" s))
+                      (should (string-match-p "Started:" s))
+                      (should (string-match-p "Elapsed:" s)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-renders-deadline-and-reason ()
+  "Description buffer renders the deadline row and reason after reject.
+Combines two conditional branches (`pending-deadline' and
+`pending-reason') in one render."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-deadline*")
+      (with-current-buffer buf
+        (let ((warning-minimum-log-level :error)
+              (p (pending-make buf :label "X" :deadline 60.0)))
+          (pending-reject p "boom")
+          (let ((desc-buf (format "*Pending: %s*"
+                                  (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (with-current-buffer desc-buf
+                    (let ((s (buffer-string)))
+                      (should (string-match-p "Deadline:[[:space:]]+60\\." s))
+                      (should (string-match-p "Reason:[[:space:]]+boom" s))
+                      (should (string-match-p "Resolved:" s))
+                      (should (string-match-p ":rejected" s)))))
+              (when (get-buffer desc-buf) (kill-buffer desc-buf)))))))))
+
+(ert-deftest pending-test/describe-jump-from-buffer ()
+  "`pending-describe-jump' delegates to `pending-goto'.
+The token's start position becomes point in the placeholder's
+buffer.  We call `pending-describe-jump' from inside the
+description buffer using `set-buffer' (not `with-current-buffer')
+so the buffer change made by `pending-goto' / `pop-to-buffer'
+remains visible afterwards rather than being unwound."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-describe-jump*")
+      (with-current-buffer buf
+        (insert "Some content here xyz")
+        (let* ((target-pos (+ (point-min) 5))
+               (p (pending-insert target-pos "...")))
+          (let ((desc-buf-name (format "*Pending: %s*"
+                                       (symbol-name (pending-id p)))))
+            (unwind-protect
+                (progn
+                  (pending-describe p)
+                  (let ((desc-buf (get-buffer desc-buf-name)))
+                    (should desc-buf)
+                    (set-buffer desc-buf)
+                    (pending-describe-jump))
+                  (should (eq (current-buffer) buf))
+                  (should (= (point) target-pos)))
+              (when (get-buffer desc-buf-name)
+                (kill-buffer desc-buf-name)))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

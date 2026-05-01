@@ -1873,6 +1873,7 @@ placeholder directly to cancel it."
     (define-key m (kbd "g") #'pending-list-refresh)
     (define-key m (kbd "RET") #'pending-list-jump)
     (define-key m (kbd "c") #'pending-list-cancel)
+    (define-key m (kbd "?") #'pending-list-describe)
     (define-key m (kbd "q") #'quit-window)
     m)
   "Keymap for `pending-list-mode' buffers.
@@ -1990,12 +1991,25 @@ called outside `pending-list-mode'."
         (pending-list-refresh)))))
 
 ;;;###autoload
+(defun pending-list-describe ()
+  "Describe the placeholder at point in the *Pending* list.
+Opens a `*Pending: ID*' buffer in `pending-description-mode' with
+structured details (status, timing, callbacks, process, etc.) about
+the row's struct.  No-op when called outside `pending-list-mode' or
+when the row is empty."
+  (interactive)
+  (when (derived-mode-p 'pending-list-mode)
+    (let ((p (tabulated-list-get-id)))
+      (when p
+        (pending-describe p)))))
+
+;;;###autoload
 (defun pending-list ()
   "Display all active pending placeholders in a tabulated-list buffer.
 Columns: ID, Buffer, Label, Status, Elapsed, ETA, Group.  Rows are
 sorted by ID by default; clicking a column header sorts by that
 column.  Bindings: `g' refresh, `RET' jump to placeholder, `c' cancel,
-`q' quit."
+`?' describe, `q' quit."
   (interactive)
   (let ((buf (get-buffer-create "*Pending*")))
     (with-current-buffer buf
@@ -2003,6 +2017,160 @@ column.  Bindings: `g' refresh, `RET' jump to placeholder, `c' cancel,
         (pending-list-mode))
       (pending--list-populate)
       (tabulated-list-print t))
+    (pop-to-buffer buf)))
+
+
+;;; Public API: description buffer
+
+(defvar pending-description-mode-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "g") #'pending-describe-refresh)
+    (define-key m (kbd "RET") #'pending-describe-jump)
+    (define-key m (kbd "c") #'pending-describe-cancel)
+    (define-key m (kbd "q") #'quit-window)
+    m)
+  "Keymap for `pending-description-mode' buffers.
+`g' refreshes the rendered details, `RET' jumps to the placeholder
+in its buffer, `c' cancels the placeholder, and `q' buries the
+description buffer.")
+
+(define-derived-mode pending-description-mode special-mode "Pending-Desc"
+  "Major mode for `*Pending: ID*' description buffers.
+The buffer displays structured details for a single placeholder —
+identity, lifecycle status, timing, indicator state, callback
+wiring, and any attached process.  See `pending-describe'.
+
+\\{pending-description-mode-map}"
+  (setq buffer-read-only t)
+  (setq truncate-lines nil))
+
+(defvar-local pending-description--token nil
+  "Buffer-local pointer to the token being described.
+Set by `pending--describe-render' so the keymap commands can
+operate on the same struct across refreshes.")
+
+(defun pending-describe-refresh ()
+  "Re-render the current `pending-description-mode' buffer.
+No-op outside `pending-description-mode'.  Reads the token from
+the buffer-local `pending-description--token' so the keymap
+commands have nothing to track manually."
+  (interactive)
+  (when (and (derived-mode-p 'pending-description-mode)
+             pending-description--token)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (pending--describe-render pending-description--token))))
+
+(defun pending-describe-jump ()
+  "Jump to the placeholder being described in its buffer.
+Delegates to `pending-goto'.  No-op when there is no token in
+the buffer-local `pending-description--token'."
+  (interactive)
+  (when (and (derived-mode-p 'pending-description-mode)
+             pending-description--token)
+    (pending-goto pending-description--token)))
+
+(defun pending-describe-cancel ()
+  "Cancel the placeholder being described.
+Reason is `:cancelled-from-describe'.  Refreshes the buffer so
+the new terminal status is visible.  No-op when there is no
+token in the buffer-local `pending-description--token'."
+  (interactive)
+  (when (and (derived-mode-p 'pending-description-mode)
+             pending-description--token)
+    (pending-cancel pending-description--token :cancelled-from-describe)
+    (pending-describe-refresh)))
+
+(defun pending--describe-render (token)
+  "Insert structured details about TOKEN into the current buffer.
+Called by `pending-describe' (initial render) and
+`pending-describe-refresh' after re-erasing the buffer.  Sets the
+buffer-local `pending-description--token' so the keymap commands
+can find their target across refreshes."
+  (setq pending-description--token token)
+  (let* ((status (pending-status token))
+         (started (pending-start-time token))
+         (resolved (pending-resolved-at token))
+         (elapsed (when started
+                    (- (or resolved (float-time)) started)))
+         (buf (pending-buffer token))
+         (buf-name (if (buffer-live-p buf)
+                       (buffer-name buf)
+                     "<dead>")))
+    (insert (propertize (format "Pending %s\n"
+                                (symbol-name (pending-id token)))
+                        'face 'bold))
+    (insert (make-string 40 ?-) "\n\n")
+    (insert (format "%-12s %s\n" "ID:"
+                    (symbol-name (pending-id token))))
+    (insert (format "%-12s %s\n" "Label:"
+                    (or (pending-label token) "")))
+    (insert (format "%-12s %s\n" "Status:" status))
+    (when (pending-reason token)
+      (insert (format "%-12s %s\n" "Reason:"
+                      (pending--format-reason (pending-reason token)))))
+    (insert (format "%-12s %s\n" "Buffer:" buf-name))
+    (when (pending-group token)
+      (insert (format "%-12s %s\n" "Group:" (pending-group token))))
+    (insert "\n")
+    (insert (format "%-12s %s\n" "Indicator:"
+                    (or (pending-indicator token) :spinner)))
+    (when (pending-spinner-style token)
+      (insert (format "%-12s %s\n" "Spinner:"
+                      (pending-spinner-style token))))
+    (when (pending-eta token)
+      (insert (format "%-12s %.2fs\n" "ETA:" (pending-eta token))))
+    (when (pending-percent token)
+      (insert (format "%-12s %.0f%%\n" "Percent:"
+                      (* 100 (pending-percent token)))))
+    (when (pending-deadline token)
+      (insert (format "%-12s %.2fs\n" "Deadline:"
+                      (pending-deadline token))))
+    (insert "\n")
+    (when started
+      (insert (format "%-12s %s\n" "Started:"
+                      (format-time-string "%FT%T" started))))
+    (when resolved
+      (insert (format "%-12s %s\n" "Resolved:"
+                      (format-time-string "%FT%T" resolved))))
+    (when elapsed
+      (insert (format "%-12s %.2fs\n" "Elapsed:" elapsed)))
+    (insert "\n")
+    (insert (format "%-12s %s\n" "on-cancel:"
+                    (if (pending-on-cancel token) "yes" "no")))
+    (insert (format "%-12s %s\n" "on-resolve:"
+                    (if (pending-on-resolve token) "yes" "no")))
+    (when (pending-attached-process token)
+      (insert (format "%-12s %S\n" "process:"
+                      (pending-attached-process token))))
+    (insert "\n")
+    (insert (substitute-command-keys
+             (concat "Press \\[pending-describe-jump] to jump, "
+                     "\\[pending-describe-cancel] to cancel, "
+                     "\\[pending-describe-refresh] to refresh, "
+                     "\\[quit-window] to quit.\n")))))
+
+;;;###autoload
+(defun pending-describe (token)
+  "Show TOKEN's details in a `*Pending: ID*' buffer.
+Pops up a read-only buffer in `pending-description-mode' showing
+structured details: token id, label, status, reason, owner buffer,
+group, indicator type and per-mode state, schedule and resolve
+timestamps, elapsed time, callback wiring, and any attached
+process.
+
+Interactively, prompt with `completing-read' over the registered
+placeholders.  Bindings inside the description buffer: \\<pending-description-mode-map>\\[pending-describe-refresh] refresh,
+\\[pending-describe-jump] jump to placeholder, \\[pending-describe-cancel] cancel, \\[quit-window] quit."
+  (interactive (list (pending--read-token "Describe pending: ")))
+  (let* ((bufname (format "*Pending: %s*" (symbol-name (pending-id token))))
+         (buf (get-buffer-create bufname)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (pending-description-mode)
+        (pending--describe-render token)
+        (goto-char (point-min))))
     (pop-to-buffer buf)))
 
 
