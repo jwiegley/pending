@@ -1,0 +1,23 @@
+CLAUDE.md
+  2046fa0cf43c79ba 1-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "2a65e6e969b99dcae4618194834bb7f9b9a983af",
+  "prompts": {
+    "2046fa0cf43c79ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84ff801f-0d04-4818-a2f9-e45c127bdc44",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "John Wiegley <jwiegley@gmail.com>",
+      "messages": [],
+      "total_additions": 239,
+      "total_deletions": 0,
+      "accepted_lines": 239,
+      "overriden_lines": 0
+    }
+  }
+}
