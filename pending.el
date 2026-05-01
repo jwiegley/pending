@@ -822,17 +822,17 @@ can cancel an in-flight placeholder by activating it directly.")
 
 ;;;###autoload
 (cl-defun pending-make (buffer &key
-                                label
-                                start end
-                                indicator
-                                deadline
-                                eta
-                                percent
-                                face
-                                spinner-style
-                                on-cancel
-                                on-resolve
-                                group)
+                               label
+                               start end
+                               indicator
+                               deadline
+                               eta
+                               percent
+                               face
+                               spinner-style
+                               on-cancel
+                               on-resolve
+                               group)
   "Create and insert a pending placeholder in BUFFER.
 Return the new `pending' struct.  The placeholder is registered in
 `pending--registry' and the buffer-local `pending--buffer-registry'

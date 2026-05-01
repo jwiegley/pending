@@ -20,5 +20,10 @@
 (script "test" "eask test ert pending-test.el")
 
 (source "gnu")
+(source "melpa")
 
 (depends-on "emacs" "27.1")
+
+(development
+ (depends-on "package-lint")
+ (depends-on "undercover"))

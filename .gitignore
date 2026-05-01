@@ -1,6 +1,10 @@
 *.elc
 /.eask/
+/.cask/
 /dist/
 /coverage/
+/coverage.lcov
+/profile-report.txt
 /.pending/
 /doc/pending.html
+/result
