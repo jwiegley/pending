@@ -18,7 +18,7 @@ underlying request gets cancelled too.
 Calling Claude  ⠋ [████████░░░░░░░░] 47%
 ```
 
-**v0.1.0 — Emacs 27.1+ — BSD-3-Clause**
+**v0.2.0 — Emacs 27.1+ — BSD-3-Clause**
 
 ## At a glance
 
@@ -794,7 +794,7 @@ is a condensed version of `RESEARCH.md` §1.
 | Animation         | Static Unicode glyph                         | Animated spinner (10 fps, single global timer)           |
 | Progress bar      | Single line of text in `after-string`        | Eighth-block Unicode bar (or ASCII fallback)             |
 | Streaming         | Message-passing via `org-pending-send-update`| First-class `pending-stream-insert` / `-stream-finish`   |
-| Description UI    | `*Region Lock*` describe buffer              | Tabulated list (`pending-list`) — describe deferred      |
+| Description UI    | `*Region Lock*` describe buffer              | Tabulated list (`pending-list`) plus per-token `pending-describe` buffer |
 | Indirect buffers  | Read-only projection                         | Yes — adopt-mode read-only properties live on buffer text and project |
 | Kill-emacs query  | Built in (`kill-emacs-query-functions`)      | Same hook, gated by `pending-confirm-on-emacs-exit`      |
 
@@ -825,9 +825,9 @@ out of the box, prefer this one.
   Coordinate multiple related placeholders via the `:group`
   keyword and `pending-list-active`.
 
-## Roadmap (v0.2 and beyond)
+## Roadmap
 
-Landed in v0.2:
+Landed in v0.2.0:
 
 - Auto-refresh of `*Pending*` on registry mutation.
 - Pulse-on-resolve flash via `pulse.el`.
@@ -873,8 +873,8 @@ eask install-deps
 # Compile (warning-free)
 eask compile
 
-# Run tests (77 ERT tests)
-eask test ert pending-test.el
+# Run tests (117 ERT tests across pending-test.el and pending-aio-test.el)
+eask test ert pending-test.el pending-aio-test.el
 
 # All-in-one via Make
 make compile

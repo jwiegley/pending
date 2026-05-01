@@ -8,7 +8,7 @@
 @c %**end of header
 
 @copying
-This manual describes Pending v0.1.0, a library for marking buffer
+This manual describes Pending v0.2.0, a library for marking buffer
 regions whose content arrives asynchronously.
 
 Copyright @copyright{} 2026 John Wiegley.
@@ -27,7 +27,7 @@ full license text.
 @titlepage
 @title Pending
 @subtitle Async content placeholders for Emacs
-@subtitle for version 0.1.0
+@subtitle for version 0.2.0
 @author John Wiegley
 @page
 @vskip 0pt plus 1filll
@@ -59,7 +59,7 @@ full license text.
 * Hooks and callbacks::         Lifecycle wiring.
 * Comparison::                  @code{org-pending} and prior art.
 * Caveats::                     Known limitations.
-* Roadmap::                     What's planned for v0.2.
+* Roadmap::                     Status of v0.2 deliverables and beyond.
 * Development::                 Building and testing.
 * License::                     Manual license.
 * Index::
@@ -1195,6 +1195,42 @@ nil (the default) the query function returns t unconditionally and
 the exit is not blocked.
 @end defopt
 
+@defopt pending-list-auto-refresh
+If non-nil (the default), the @code{*Pending*} list buffer
+re-populates itself whenever a placeholder is registered or
+unregistered, without requiring the user to press @kbd{g}.
+@code{pending--register} and @code{pending--unregister} call
+@code{pending--list-refresh-if-live} after mutating the registry,
+which checks for a live @code{*Pending*} buffer in
+@code{pending-list-mode} and reruns @code{pending-list-refresh} on
+it.  Set to nil to fall back to the v0.1.0 manual-refresh
+behaviour.
+@end defopt
+
+@defopt pending-pulse-on-resolve
+If non-nil (the default), flash the placeholder's region with
+@code{pulse.el} when it transitions to @code{:resolved}.  The
+flash happens after @code{pending--swap-region} has already
+inserted the resolved text, providing a brief post-resolution
+visual confirmation in the spirit of gptel's
+@code{gptel-post-response-functions} integration.  No flash on
+@code{:rejected}, @code{:cancelled}, or @code{:expired} (those
+already inject visible glyphs).  Set to nil to disable the
+flash entirely.
+@end defopt
+
+@defopt pending-fringe-bitmap
+Symbol naming a fringe bitmap to display beside the placeholder
+in graphical frames, or nil (the default) to display no fringe
+indicator.  The bitmap is set as the overlay's
+@code{before-string} fringe display property; on TTYs and other
+frames without fringes the option is silently ignored.  Useful
+for off-screen visibility of placeholders that have scrolled out
+of view.  The defcustom was scaffolded in v0.1.0 then deleted
+before that release; v0.2.0 wires it into
+@code{pending--render}.
+@end defopt
+
 @defopt pending-svg-spinner-enable
 If non-nil (the default), render spinners as SVG images on
 graphical frames that have SVG image support.  Gated on
@@ -1406,11 +1442,11 @@ different angle.
 
 @item Description UI
 @tab @code{*Region Lock*} describe buffer
-@tab Tabulated list (deferred describe-buffer)
+@tab Tabulated list plus @code{pending-describe} per-token buffer
 
 @item Indirect buffers
-@tab Read-only projection
-@tab Not yet --- single-buffer scope
+@tab Read-only projection via overlay trick
+@tab Read-only projection via text properties on adopted region
 
 @item Kill-emacs query
 @tab Built in
@@ -1438,18 +1474,12 @@ some buffer operations.  Keep concurrent counts modest.
 variable-pitch buffer faces, the bar may look ragged.  Set
 @code{pending-bar-family} to a fixed-pitch family to compensate.
 
-@item @strong{No SVG spinner in v0.1.}  Spinners are text glyphs
-only.  SVG spinners (and a fringe-bitmap indicator) are on the v0.2
-roadmap.
-
-@item @strong{Manual refresh of @code{*Pending*} list.}  Press
-@kbd{g} to update; the list does not auto-refresh on registry
-mutation in v0.1.
-
-@item @strong{Single-buffer scope.}  A placeholder's overlay and
-read-only text properties live in one buffer.  There is no
-projection across indirect buffers in v0.1; @code{org-pending}-style
-indirect-buffer projection is on the roadmap.
+@item @strong{Overlay scope.}  A placeholder's overlay lives in
+one buffer.  As of v0.2 the read-only text properties applied in
+adopt mode (gated on @code{pending-protect-adopted-region})
+project into indirect buffers via the buffer text itself, but the
+visible overlay decoration (spinner, lighter, progress bar) only
+appears in the host buffer.
 
 @item @strong{No cross-buffer multi-region pending.}  A single
 pending struct represents one contiguous region in one buffer.
@@ -1463,19 +1493,33 @@ keyword and @code{pending-list-active}.
 @cindex roadmap
 @cindex v0.2
 
-Items deferred past the v0.1.0 tag:
+All eight items deferred past the v0.1.0 tag landed in v0.2.0:
 
 @itemize @bullet
-@item Auto-refresh of @code{*Pending*} on registry mutation.
-@item Pulse-on-resolve flash via @code{pulse.el}.
-@item @code{pending-as-promise} adapter for @code{aio} users.
-@item SVG spinner for graphical frames.
-@item Fringe bitmap indicator beside the placeholder.
+@item Auto-refresh of @code{*Pending*} on registry mutation
+(@code{pending-list-auto-refresh} defcustom).
+@item Pulse-on-resolve flash via @code{pulse.el}
+(@code{pending-pulse-on-resolve} defcustom).
+@item @code{pending-as-promise} adapter for @code{aio} users
+(optional add-on @file{pending-aio.el}).
+@item SVG spinner for graphical frames
+(@code{pending-svg-spinner-enable} /
+@code{pending-svg-spinner-size} defcustoms).
+@item Fringe bitmap indicator beside the placeholder
+(@code{pending-fringe-bitmap} defcustom).
 @item @code{*Region Lock*}-style description buffer for a single
-placeholder.
-@item Indirect-buffer projection of read-only properties.
+placeholder (@code{pending-describe} command and
+@code{pending-description-mode}).
+@item Indirect-buffer projection of read-only properties
+(@code{pending-protect-adopted-region} defcustom).
 @item @code{pending-test--with-mocked-time} macro for deterministic
 fast-forward testing.
+@end itemize
+
+Still on the roadmap after v0.2:
+
+@itemize @bullet
+@item Group operations (@code{pending-cancel-group}).
 @end itemize
 
 
@@ -1496,8 +1540,8 @@ eask install-deps
 # Compile (warning-free)
 eask compile
 
-# Run tests (72 ERT tests as of v0.1.0)
-eask test ert pending-test.el
+# Run tests (117 ERT tests as of v0.2.0)
+eask test ert pending-test.el pending-aio-test.el
 
 # All-in-one via Make
 make compile

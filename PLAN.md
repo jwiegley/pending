@@ -52,8 +52,8 @@ mechanical.
             frame-vector)
       - [x] `pending-bar-style` (`'eighths` or `'ascii`)
       - [x] `pending-bar-family` (default nil)
-      - [x] ~~`pending-fringe-bitmap` (default nil)~~ — *removed for
-            v0.1; deferred to v0.2 (see Deferred section below).*
+      - [x] `pending-fringe-bitmap` (default nil) — *removed for
+            v0.1; resurrected in v0.2 (commit `7b6bbd9`).*
       - [x] `pending-allow-read-only` (default nil)
       - [x] `pending-label-max-width` (default 60)
       - [x] `pending-confirm-on-emacs-exit` (default nil)
@@ -212,8 +212,8 @@ lighter.
       Buffer, Label, Status, Elapsed, ETA, Group.
 - [x] `pending-list-mode` keymap: `g` refresh, `RET` jump, `c`
       cancel, `q` quit.
-- [ ] Auto-refresh on registry mutation (or polled at 1 Hz).
-      *(Deferred to v0.2 — manual refresh via `g` for v0.1.)*
+- [x] Auto-refresh on registry mutation (or polled at 1 Hz).
+      *(Delivered in v0.2 — gated on `pending-list-auto-refresh`.)*
 - [x] `pending-cancel-at-point` using `pending-at`.
 - [x] `pending-region-map` binding `RET` and `[mouse-1]` to
       `pending-cancel-at-point`.
@@ -232,11 +232,8 @@ the list and from point both work; lighter shows summary.
 **Goal**: ship-ready library.
 
 - [x] ERT test file fleshed out with all groups from DESIGN.md §8.
-- [ ] `pending-test--with-mocked-time` macro for fast-forward
-      testing.
-      *(Deferred to v0.2 — current tests use `sit-for` and direct
-      mutation of `pending-start-time` for determinism; a mocked-time
-      macro is nice-to-have but not required for v0.1.)*
+- [x] `pending-test--with-mocked-time` macro for fast-forward
+      testing.  *(Delivered in v0.2.)*
 - [x] `pending-demo` interactive command with several concurrent
       placeholders of varying durations and modes.
 - [x] README expanded with API table, integration recipes, comparison
@@ -247,9 +244,8 @@ the list and from point both work; lighter shows summary.
 - [x] Makefile `docs`/`info`/`html` targets; `Eask` lists docs in
       `(files ...)`; `.gitignore` ignores generated HTML.
 - [x] `;;;###autoload` cookies on user-facing commands.
-- [ ] Tag `0.1.0` once everything is green.
-      *(Tagging happens outside this implementation phase; the user
-      tags via git after merging Phase 9.)*
+- [x] Tag `0.1.0` once everything is green.  *(Tagged after Phase 9
+      merge.  The v0.2.0 follow-on ships the eight items below.)*
 - [x] Verify install via `package-vc-install` from the local repo
       path.
 
@@ -258,35 +254,34 @@ renders; `M-x pending-demo` looks right on light + dark themes.
 
 ---
 
-## Deferred to v0.2
+## Phase v0.2 — delivered
 
-Items intentionally postponed past the v0.1.0 tag:
+All eight items deferred from v0.1.0 shipped in v0.2.0:
 
-- Auto-refresh of `*Pending*` list on registry mutation. Today the
-  user types `g` to refresh; v0.2 should hook the registry mutation
-  path so the list view stays live without manual interaction.
-- Pulse-on-resolve flash via `pulse.el` for a brief post-resolution
-  visual confirmation, similar to gptel's
-  `gptel-post-response-functions` integration.
-- `pending-as-promise` adapter for `aio` users — non-blocking; the
-  callback shape is the v0.1 commitment.
-- SVG spinner for graphical frames (would render with `svg.el`); v0.1
-  ships with text-only Unicode spinners.
-- Fringe bitmap indicator beside the placeholder for off-screen
-  visibility in graphical frames. The `pending-fringe-bitmap`
-  defcustom was scaffolded earlier but never wired up; it has been
-  removed from v0.1 and will return alongside the SVG spinner work.
-- Description buffer in the `*Region Lock*` style of `org-pending`
-  for richer diagnostics on a single placeholder.
-- ~~Indirect-buffer projection of read-only properties (org-pending's
-  `--add-overlay-projection` trick), so a placeholder's edit
-  protection survives across indirect-buffer views.~~ *Implemented in
-  v0.2: adopt mode applies `read-only` text properties (gated on
-  `pending-protect-adopted-region', default t).  Text properties live
-  in the buffer text itself and project into indirect buffers, so this
-  closes the gap with overlays.*
-- ~~`pending-test--with-mocked-time` macro for deterministic fast-
-  forward testing (DESIGN.md §8).~~ *Implemented in v0.2.*
+- [x] Auto-refresh of `*Pending*` list on registry mutation
+      (`pending-list-auto-refresh` defcustom; commit `582d190`).
+- [x] Pulse-on-resolve flash via `pulse.el`
+      (`pending-pulse-on-resolve` defcustom; commit `ac9eae0`).
+- [x] Fringe bitmap indicator
+      (`pending-fringe-bitmap` defcustom resurrected; commit `7b6bbd9`).
+- [x] SVG spinner for graphical frames
+      (`pending-svg-spinner-enable` / `pending-svg-spinner-size`
+      defcustoms, cached on `(face style frame size)`; commit
+      `5314c79`).
+- [x] `*Pending: ID*` description buffer
+      (`pending-describe` command, `pending-description-mode`;
+      commit `c472609`).
+- [x] Indirect-buffer projection of read-only protection
+      (`pending-protect-adopted-region` defcustom; adopted regions
+      get `read-only` text properties by default, which inherit
+      across `make-indirect-buffer`; commit `2db860d`).
+- [x] `pending-as-promise` adapter for `aio` users
+      (optional companion file `pending-aio.el`; commit `18bc97a`).
+- [x] `pending-test--with-mocked-time` macro for deterministic
+      fast-forward testing (DESIGN.md §8; commit `742b782`).
+
+See the v0.2.0 release notes and `git log` for the per-commit
+details.
 
 ---
 
@@ -302,18 +297,8 @@ Apply to every phase:
 - [x] No `(require 'cl)` (use `cl-lib`).
 - [x] No third-party deps (Emacs core only).
 
-## Stretch / v2
+## Stretch / post-v0.2
 
-Items intentionally left for after v1 ships:
+Items still on the roadmap after v0.2.0:
 
-- SVG spinner. *Implemented in v0.2.*
-- `pending-as-promise` adapter for `aio` users. *Implemented in
-  v0.2 as the optional `pending-aio` add-on.*
-- `*Pending*` description buffer (org-pending-style). *Implemented
-  in v0.2 as `pending-describe'.*
-- Indirect-buffer projection. *Implemented in v0.2 via
-  `pending-protect-adopted-region'.*
-- `kill-emacs-query-functions` integration (gated by a defcustom
-  with default nil). *Implemented in Phase 9.*
-- Pulse-on-resolve flash. *Implemented in v0.2.*
 - Group operations (`pending-cancel-group`).

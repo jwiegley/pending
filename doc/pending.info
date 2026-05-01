@@ -1,7 +1,7 @@
 This is pending.info, produced by makeinfo version 7.2 from
 pending.texi.
 
-This manual describes Pending v0.1.0, a library for marking buffer
+This manual describes Pending v0.2.0, a library for marking buffer
 regions whose content arrives asynchronously.
 
    Copyright © 2026 John Wiegley.
@@ -20,7 +20,7 @@ File: pending.info,  Node: Top,  Next: Introduction,  Up: (dir)
 Pending
 *******
 
-This manual describes Pending v0.1.0, a library for marking buffer
+This manual describes Pending v0.2.0, a library for marking buffer
 regions whose content arrives asynchronously.
 
    Copyright © 2026 John Wiegley.
@@ -46,7 +46,7 @@ license text.
 * Hooks and callbacks::         Lifecycle wiring.
 * Comparison::                  ‘org-pending’ and prior art.
 * Caveats::                     Known limitations.
-* Roadmap::                     What's planned for v0.2.
+* Roadmap::                     Status of v0.2 deliverables and beyond.
 * Development::                 Building and testing.
 * License::                     Manual license.
 * Index::
@@ -999,6 +999,34 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      (the default) the query function returns t unconditionally and the
      exit is not blocked.
 
+ -- User Option: pending-list-auto-refresh
+     If non-nil (the default), the ‘*Pending*’ list buffer re-populates
+     itself whenever a placeholder is registered or unregistered,
+     without requiring the user to press ‘g’.  ‘pending--register’ and
+     ‘pending--unregister’ call ‘pending--list-refresh-if-live’ after
+     mutating the registry, which checks for a live ‘*Pending*’ buffer
+     in ‘pending-list-mode’ and reruns ‘pending-list-refresh’ on it.
+     Set to nil to fall back to the v0.1.0 manual-refresh behaviour.
+
+ -- User Option: pending-pulse-on-resolve
+     If non-nil (the default), flash the placeholder's region with
+     ‘pulse.el’ when it transitions to ‘:resolved’.  The flash happens
+     after ‘pending--swap-region’ has already inserted the resolved
+     text, providing a brief post-resolution visual confirmation in the
+     spirit of gptel's ‘gptel-post-response-functions’ integration.  No
+     flash on ‘:rejected’, ‘:cancelled’, or ‘:expired’ (those already
+     inject visible glyphs).  Set to nil to disable the flash entirely.
+
+ -- User Option: pending-fringe-bitmap
+     Symbol naming a fringe bitmap to display beside the placeholder in
+     graphical frames, or nil (the default) to display no fringe
+     indicator.  The bitmap is set as the overlay's ‘before-string’
+     fringe display property; on TTYs and other frames without fringes
+     the option is silently ignored.  Useful for off-screen visibility
+     of placeholders that have scrolled out of view.  The defcustom was
+     scaffolded in v0.1.0 then deleted before that release; v0.2.0 wires
+     it into ‘pending--render’.
+
  -- User Option: pending-svg-spinner-enable
      If non-nil (the default), render spinners as SVG images on
      graphical frames that have SVG image support.  Gated on
@@ -1171,11 +1199,13 @@ Streaming      Message-passing via           First-class
                ‘org-pending-send-update’     ‘pending-stream-insert’ /
                                              ‘-stream-finish’
                                              
-Description    ‘*Region Lock*’ describe      Tabulated list (deferred
-UI             buffer                        describe-buffer)
+Description    ‘*Region Lock*’ describe      Tabulated list plus
+UI             buffer                        ‘pending-describe’
+                                             per-token buffer
                                              
-Indirect       Read-only projection          Not yet -- single-buffer
-buffers                                      scope
+Indirect       Read-only projection via      Read-only projection via
+buffers        overlay trick                 text properties on adopted
+                                             region
                                              
 Kill-emacs     Built in                      Same hook, gated by
 query                                        ‘pending-confirm-on-emacs-exit’
@@ -1200,16 +1230,11 @@ File: pending.info,  Node: Caveats,  Next: Roadmap,  Prev: Comparison,  Up: Top
      bar may look ragged.  Set ‘pending-bar-family’ to a fixed-pitch
      family to compensate.
 
-   • *No SVG spinner in v0.1.*  Spinners are text glyphs only.  SVG
-     spinners (and a fringe-bitmap indicator) are on the v0.2 roadmap.
-
-   • *Manual refresh of ‘*Pending*’ list.*  Press ‘g’ to update; the
-     list does not auto-refresh on registry mutation in v0.1.
-
-   • *Single-buffer scope.*  A placeholder's overlay and read-only text
-     properties live in one buffer.  There is no projection across
-     indirect buffers in v0.1; ‘org-pending’-style indirect-buffer
-     projection is on the roadmap.
+   • *Overlay scope.*  A placeholder's overlay lives in one buffer.  As
+     of v0.2 the read-only text properties applied in adopt mode (gated
+     on ‘pending-protect-adopted-region’) project into indirect buffers
+     via the buffer text itself, but the visible overlay decoration
+     (spinner, lighter, progress bar) only appears in the host buffer.
 
    • *No cross-buffer multi-region pending.*  A single pending struct
      represents one contiguous region in one buffer.  Coordinate
@@ -1222,17 +1247,28 @@ File: pending.info,  Node: Roadmap,  Next: Development,  Prev: Caveats,  Up: Top
 16 Roadmap
 **********
 
-Items deferred past the v0.1.0 tag:
+All eight items deferred past the v0.1.0 tag landed in v0.2.0:
 
-   • Auto-refresh of ‘*Pending*’ on registry mutation.
-   • Pulse-on-resolve flash via ‘pulse.el’.
-   • ‘pending-as-promise’ adapter for ‘aio’ users.
-   • SVG spinner for graphical frames.
-   • Fringe bitmap indicator beside the placeholder.
-   • ‘*Region Lock*’-style description buffer for a single placeholder.
-   • Indirect-buffer projection of read-only properties.
+   • Auto-refresh of ‘*Pending*’ on registry mutation
+     (‘pending-list-auto-refresh’ defcustom).
+   • Pulse-on-resolve flash via ‘pulse.el’ (‘pending-pulse-on-resolve’
+     defcustom).
+   • ‘pending-as-promise’ adapter for ‘aio’ users (optional add-on
+     ‘pending-aio.el’).
+   • SVG spinner for graphical frames (‘pending-svg-spinner-enable’ /
+     ‘pending-svg-spinner-size’ defcustoms).
+   • Fringe bitmap indicator beside the placeholder
+     (‘pending-fringe-bitmap’ defcustom).
+   • ‘*Region Lock*’-style description buffer for a single placeholder
+     (‘pending-describe’ command and ‘pending-description-mode’).
+   • Indirect-buffer projection of read-only properties
+     (‘pending-protect-adopted-region’ defcustom).
    • ‘pending-test--with-mocked-time’ macro for deterministic
      fast-forward testing.
+
+   Still on the roadmap after v0.2:
+
+   • Group operations (‘pending-cancel-group’).
 
 
 File: pending.info,  Node: Development,  Next: License,  Prev: Roadmap,  Up: Top
@@ -1252,8 +1288,8 @@ automation, with a Makefile wrapper.
      # Compile (warning-free)
      eask compile
 
-     # Run tests (72 ERT tests as of v0.1.0)
-     eask test ert pending-test.el
+     # Run tests (117 ERT tests as of v0.2.0)
+     eask test ert pending-test.el pending-aio-test.el
 
      # All-in-one via Make
      make compile
@@ -1331,7 +1367,7 @@ Index
 * edit-survival:                         Concepts.            (line 101)
 * errors:                                Hooks and callbacks. (line  58)
 * ETA:                                   Indicator modes.     (line   6)
-* faces:                                 Customization.       (line  99)
+* faces:                                 Customization.       (line 127)
 * global-pending-lighter-mode:           Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <1>:       Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <2>:       Mode-line lighter.   (line   7)
@@ -1374,8 +1410,8 @@ Index
 * pending-cancel <1>:                    Simple API.          (line  57)
 * pending-cancel-at-point:               Simple API.          (line  95)
 * pending-cancel-at-point <1>:           Simple API.          (line  96)
-* pending-cancelled-face:                Customization.       (line 136)
-* pending-cancelled-face <1>:            Customization.       (line 137)
+* pending-cancelled-face:                Customization.       (line 164)
+* pending-cancelled-face <1>:            Customization.       (line 165)
 * pending-confirm-on-emacs-exit:         Customization.       (line  56)
 * pending-default-spinner-style:         Customization.       (line  20)
 * pending-demo:                          Interactive UI.      (line  77)
@@ -1387,26 +1423,28 @@ Index
 * pending-describe-jump:                 Interactive UI.      (line  57)
 * pending-describe-refresh:              Interactive UI.      (line  55)
 * pending-error:                         Hooks and callbacks. (line  58)
-* pending-error-face:                    Customization.       (line 131)
-* pending-error-face <1>:                Customization.       (line 132)
-* pending-face:                          Customization.       (line 117)
-* pending-face <1>:                      Customization.       (line 118)
+* pending-error-face:                    Customization.       (line 159)
+* pending-error-face <1>:                Customization.       (line 160)
+* pending-face:                          Customization.       (line 145)
+* pending-face <1>:                      Customization.       (line 146)
 * pending-finish:                        Simple API.          (line  42)
 * pending-finish <1>:                    Simple API.          (line  43)
 * pending-fps:                           Customization.       (line   9)
+* pending-fringe-bitmap:                 Customization.       (line  81)
 * pending-goto:                          Simple API.          (line  72)
 * pending-goto <1>:                      Simple API.          (line  73)
-* pending-highlight:                     Customization.       (line 106)
-* pending-highlight <1>:                 Customization.       (line 107)
+* pending-highlight:                     Customization.       (line 134)
+* pending-highlight <1>:                 Customization.       (line 135)
 * pending-insert:                        Simple API.          (line  34)
 * pending-insert <1>:                    Simple API.          (line  35)
 * pending-label-max-width:               Customization.       (line  50)
-* pending-lighter:                       Customization.       (line 112)
-* pending-lighter <1>:                   Customization.       (line 113)
+* pending-lighter:                       Customization.       (line 140)
+* pending-lighter <1>:                   Customization.       (line 141)
 * pending-list:                          Simple API.          (line  82)
 * pending-list <1>:                      Simple API.          (line  83)
 * pending-list-active:                   Rich API.            (line 185)
 * pending-list-active <1>:               Rich API.            (line 186)
+* pending-list-auto-refresh:             Customization.       (line  63)
 * pending-list-cancel:                   Interactive UI.      (line  29)
 * pending-list-describe:                 Interactive UI.      (line  31)
 * pending-list-jump:                     Interactive UI.      (line  27)
@@ -1416,17 +1454,18 @@ Index
 * pending-make <2>:                      Rich API.            (line   6)
 * pending-mode-line-string:              Mode-line lighter.   (line  20)
 * pending-mode-line-string <1>:          Mode-line lighter.   (line  21)
-* pending-progress-face:                 Customization.       (line 126)
-* pending-progress-face <1>:             Customization.       (line 127)
-* pending-protect-adopted-region:        Customization.       (line  75)
+* pending-progress-face:                 Customization.       (line 154)
+* pending-progress-face <1>:             Customization.       (line 155)
+* pending-protect-adopted-region:        Customization.       (line 103)
+* pending-pulse-on-resolve:              Customization.       (line  72)
 * pending-region:                        Simple API.          (line  10)
 * pending-region <1>:                    Simple API.          (line  11)
 * pending-region-map:                    Interactive UI.      (line  70)
 * pending-region-map <1>:                Interactive UI.      (line  71)
 * pending-reject:                        Rich API.            (line 123)
 * pending-reject <1>:                    Rich API.            (line 124)
-* pending-spinner-face:                  Customization.       (line 123)
-* pending-spinner-face <1>:              Customization.       (line 124)
+* pending-spinner-face:                  Customization.       (line 151)
+* pending-spinner-face <1>:              Customization.       (line 152)
 * pending-spinner-styles:                Customization.       (line  25)
 * pending-status:                        Rich API.            (line 177)
 * pending-status <1>:                    Rich API.            (line 178)
@@ -1434,8 +1473,8 @@ Index
 * pending-stream-finish <1>:             Rich API.            (line 111)
 * pending-stream-insert:                 Rich API.            (line  84)
 * pending-stream-insert <1>:             Rich API.            (line  85)
-* pending-svg-spinner-enable:            Customization.       (line  63)
-* pending-svg-spinner-size:              Customization.       (line  70)
+* pending-svg-spinner-enable:            Customization.       (line  91)
+* pending-svg-spinner-size:              Customization.       (line  98)
 * pending-update:                        Rich API.            (line  72)
 * pending-update <1>:                    Rich API.            (line  73)
 * piecewise asymptote:                   Indicator modes.     (line  24)
@@ -1465,25 +1504,25 @@ Index
 
 Tag Table:
 Node: Top517
-Node: Introduction2009
-Node: Installation3922
-Node: Quick start4834
-Node: Concepts6135
-Node: Simple API12122
-Node: Rich API16709
-Node: Indicator modes25069
-Node: Integrations27314
-Node: Promise adapter31793
-Node: Interactive UI33520
-Node: Mode-line lighter36413
-Node: Customization37410
-Node: Hooks and callbacks43998
-Node: Comparison46136
-Node: Caveats48473
-Node: Roadmap49819
-Node: Development50464
-Node: License52137
-Node: Index52457
+Node: Introduction2024
+Node: Installation3937
+Node: Quick start4849
+Node: Concepts6150
+Node: Simple API12137
+Node: Rich API16724
+Node: Indicator modes25084
+Node: Integrations27329
+Node: Promise adapter31808
+Node: Interactive UI33535
+Node: Mode-line lighter36428
+Node: Customization37425
+Node: Hooks and callbacks45712
+Node: Comparison47850
+Node: Caveats50323
+Node: Roadmap51499
+Node: Development52660
+Node: License54354
+Node: Index54674
 
 End Tag Table
 

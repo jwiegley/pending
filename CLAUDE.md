@@ -5,17 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project orientation
 
 `pending` is a standalone Emacs Lisp library for marking buffer regions whose
-content arrives asynchronously. Released as v0.1.0; see `git tag -l` for the
+content arrives asynchronously. Released as v0.2.0; see `git tag -l` for the
 canonical release point. The repository sits inside John Wiegley's
 `dot-emacs/lisp/` collection but has no coupling to the surrounding code; do
 not introduce one.
 
 Read `DESIGN.md` (canonical spec, ~1600 lines), then `RESEARCH.md` (verified
 prior-art survey of `org-pending`, gptel, agent-shell), then `NOTES.md`
-(explicit decisions table). `PLAN.md` records phase exit criteria and items
-deferred to v0.2. The `README.md` (810 lines) and `doc/pending.texi` (~1380
-lines) are the user-facing reference; keep them in sync when changing the
-public API.
+(explicit decisions table). `PLAN.md` records phase exit criteria and the
+"Phase v0.2 — delivered" section listing the eight items shipped past
+v0.1.0. The `README.md` and `doc/pending.texi` are the user-facing
+reference; keep them in sync when changing the public API.
 
 ## Toolchain — important
 
@@ -40,8 +40,9 @@ NOT treat them as errors. Real Emacs/Eask output appears after them.
 # Byte-compile (must stay warning-free)
 load-env-emacs30MacPort eask compile
 
-# Run the full ERT suite (currently 77 tests)
-load-env-emacs30MacPort eask test ert pending-test.el
+# Run the full ERT suite (currently 117 tests across pending-test.el and
+# pending-aio-test.el)
+load-env-emacs30MacPort eask test ert pending-test.el pending-aio-test.el
 make test                        # equivalent
 
 # Run a single test (or a regex of tests) — the eask CLI doesn't reliably
@@ -237,15 +238,38 @@ holding live processes), update this function.
   them before the package is loaded (interactive commands, top-level
   setup). Internals: never.
 
-## Phase history & deferred items
+## Phase history & v0.2 deliveries
 
-The library was built in 9 phases plus a face-policy patch (see `git log`).
-PLAN.md's "Deferred to v0.2" enumerates the known v0.2 candidates: SVG
-spinner, pulse-on-resolve, `pending-as-promise` adapter, `*Pending*` list
-auto-refresh, `*Region Lock*`-style description buffer, indirect-buffer
-projection, fringe-bitmap indicator. When picking up a v0.2 task, check
-DESIGN.md §10 / NOTES.md for prior thinking and the relevant `RESEARCH.md`
-section.
+The library was built in 9 phases plus a face-policy patch for v0.1.0 (see
+`git log`).  All eight items deferred to v0.2 shipped in v0.2.0; see
+PLAN.md's "Phase v0.2 — delivered" section for the per-commit list, or the
+v0.2.0 tag annotation.  The only item still on the roadmap post-v0.2 is
+group operations (`pending-cancel-group`).
+
+### v0.2 features — what's non-obvious
+
+- `:indicator :svg-spinner` is rendered via `svg.el`, cached on a `(face,
+  style, frame, size)` key.  `pending--svg-cache` is cleared by the `:set`
+  hook on `pending-svg-spinner-size`; setting that defcustom regenerates
+  every cached image.  Gating: `pending-svg-spinner-enable` plus
+  `(display-graphic-p)` plus `(image-type-available-p 'svg)`.  TTY and
+  SVG-less builds fall back to the Unicode text glyph automatically.
+- `pending--list-refresh-if-live` is invoked from `pending--register` and
+  `pending--unregister` to keep `*Pending*` live without a polling timer.
+  The function checks for a live buffer in `pending-list-mode` and reruns
+  `pending-list-refresh` on it; gated on `pending-list-auto-refresh`.
+- Adopted regions get text-property protection by default (`read-only t`,
+  `front-sticky '(read-only)`, `rear-nonsticky '(read-only)`), gated on
+  `pending-protect-adopted-region`.  The text-property route was chosen
+  specifically because it projects into indirect buffers — the same trick
+  org-pending uses.  Insert mode is always read-only regardless.
+- `pending-aio.el` is an OPTIONAL companion file.  `pending.el` does NOT
+  `require` it; users opt in via `(require 'pending-aio)` and the file
+  pulls in `aio` at that point.  The Eask file lists the source so it's
+  byte-compiled, but `aio` is not in `Package-Requires`.
+
+When picking up a post-v0.2 task, check DESIGN.md §10 / NOTES.md for prior
+thinking and the relevant `RESEARCH.md` section.
 
 ## Coordinating documentation changes
 
