@@ -1,5 +1,10 @@
 EMACS ?= emacs
 EMACS_BATCH ?= $(EMACS) --batch -L .
+# Like EMACS_BATCH but goes through `eask emacs' so the eask-installed
+# package archive (`.eask/<emacs-version>/elpa') is on `load-path'.
+# Used for byte-compile steps that need optional deps (e.g. `aio' for
+# `pending-aio.el').
+EMACS_EASK ?= eask emacs --batch -L .
 
 DOCDIR  = doc
 TEXI    = $(DOCDIR)/pending.texi
@@ -50,10 +55,13 @@ format-check:
 	@./scripts/format-check.sh
 
 # `lint` --- package-lint + checkdoc + byte-compile -W=error.
+# The byte-compile step needs `aio' on `load-path' to compile
+# `pending-aio.el'; we go through `eask emacs' so the eask-installed
+# package archive is visible.
 lint:
 	@eask lint package
 	@eask lint checkdoc
-	$(EMACS_BATCH) --eval "(setq byte-compile-error-on-warn t)" \
+	$(EMACS_EASK) --eval "(setq byte-compile-error-on-warn t)" \
 	  -f batch-byte-compile pending.el pending-aio.el pending-test.el pending-aio-test.el
 
 # `coverage` --- run tests under undercover.el and emit lcov.
@@ -65,8 +73,10 @@ profile:
 	@./scripts/profile.sh
 
 # `warnings` --- verify clean compile (alias for byte-compile -W=error).
+# Goes through `eask emacs' for the same reason as `lint': `pending-
+# aio.el' needs `aio' on `load-path'.
 warnings:
-	$(EMACS_BATCH) --eval "(setq byte-compile-error-on-warn t)" \
+	$(EMACS_EASK) --eval "(setq byte-compile-error-on-warn t)" \
 	  -f batch-byte-compile pending.el pending-aio.el pending-test.el pending-aio-test.el
 
 # `all-checks` --- what CI runs.
