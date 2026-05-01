@@ -237,3 +237,43 @@ When you change the public API, three places need updating in lockstep:
 docstrings in `pending.el`, the matching section of `README.md`, and the
 matching `@deffn`/`@defopt` in `doc/pending.texi`. After editing the texi
 run `make docs` and commit the regenerated `doc/pending.info` alongside.
+
+## Productization
+
+The package is wired up for reproducible builds, automated checks, and
+contributor onboarding:
+
+- **Nix flake** (`flake.nix`) ships `devShells.default` (Emacs +
+  package-lint + undercover + eask + texinfo + lefthook + shellcheck +
+  shfmt) and `checks.<system>.{byte-compile,tests,lint,format,docs,coverage}`.
+  Enter the shell with `nix develop`; run all checks with
+  `nix flake check --no-warn-dirty`.
+- **Lefthook** (`lefthook.yml`) runs the same checks pre-commit, in
+  parallel, scoped to globs of staged files. After `nix develop`, run
+  `lefthook install` once to wire up the git hook. For a one-off run:
+  `lefthook run pre-commit`.
+- **GitHub Actions** (`.github/workflows/ci.yml`) runs four jobs:
+  `test-emacs` (matrix over 28.2/29.4/30.1/snapshot on Ubuntu),
+  `coverage` (lcov uploaded to Codecov), `nix` (flake check + per-check
+  builds), and `shellcheck`. The Makefile abstracts emacs invocations
+  via `$(EMACS)` / `$(EMACS_BATCH)` (default `emacs`); CI invokes the
+  Make targets with `EMACS=emacs` to bypass the local
+  `load-env-emacs30MacPort` wrapper.
+- **Coverage baseline** lives in `.coverage-baseline` as a single
+  integer percent. `scripts/coverage.sh` runs ERT under undercover.el,
+  emits `coverage.lcov`, and fails if the percent regresses below
+  baseline. The script auto-bumps the baseline up on improvement.
+- **Perf baseline** lives in `.perf-baseline` as four-line whitespace
+  table mapping benchmark name to median wall-time seconds.
+  `scripts/profile.sh` runs the four hot paths (make-and-resolve,
+  gen-id, render-bar-eighths, eta-fraction) and fails if any ratio
+  exceeds 1.05x. Update the baseline by deleting it and re-running
+  `make profile` (the script reinitialises it from the current run);
+  commit only when an intentional regression has been understood.
+- **`make all-checks`** runs `warnings test lint format-check docs
+  coverage` — what the lefthook + CI both run.
+- **`make format-check`** snapshots every tracked .el file, runs
+  `make format`, diffs against the snapshot, then restores the
+  snapshot. So it works in any working-tree state (including
+  pre-commit hooks where staged-but-uncommitted changes exist) and
+  never leaves the tree mutated.

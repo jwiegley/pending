@@ -11,11 +11,11 @@ pre-commit:
 
     lint:
       glob: "*.el"
-      run: make lint
+      run: load-env-emacs30MacPort make lint
 
     format-check:
       glob: "*.el"
-      run: make format-check
+      run: load-env-emacs30MacPort make format-check
 
     checkdoc:
       glob: "*.el"
@@ -31,11 +31,11 @@ pre-commit:
 
     coverage:
       glob: "*.el"
-      run: make coverage
+      run: load-env-emacs30MacPort make coverage
 
     profile:
       glob: "*.el"
-      run: make profile
+      run: load-env-emacs30MacPort make profile
 
     nix-check:
       glob: "{*.nix,flake.lock}"

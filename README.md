@@ -771,7 +771,24 @@ out of the box, prefer this one.
 ## Development
 
 This package uses [Eask] for build automation, with a Makefile
-wrapper.
+wrapper. A [Nix] flake provides a reproducible dev shell, and
+[lefthook] runs the same checks on each commit. The CI runs the
+full suite on a matrix of Emacs 28.2 / 29.4 / 30.1 / snapshot.
+
+### Quick start
+
+```bash
+# Enter the dev shell (Emacs + eask + texinfo + lefthook + ...)
+nix develop
+
+# Wire up the pre-commit hooks (one-time)
+lefthook install
+
+# Run the CI suite once locally
+make all-checks
+```
+
+### Common targets
 
 ```bash
 # Install dependencies
@@ -786,11 +803,32 @@ eask test ert pending-test.el
 # All-in-one via Make
 make compile
 make test
-make docs       # build doc/pending.info
+make docs           # build doc/pending.info
+make lint           # package-lint + checkdoc + byte-compile -W=error
+make format-check   # reproducible indent-region check
+make coverage       # ERT under undercover.el; baseline in .coverage-baseline
+make profile        # microbenchmarks; baseline in .perf-baseline
+make all-checks     # the whole suite
 make clean
 ```
 
+### Pre-commit checks
+
+`lefthook.yml` runs the same checks in parallel on each commit:
+byte-compile, tests, lint, format-check, checkdoc, docs-build,
+coverage, profile, `nix flake check`, the byte-compile flake
+output, `shellcheck`, and `shfmt`. Run `lefthook install` once
+after cloning to wire up the git hook.
+
+For a one-off run without committing:
+
+```bash
+lefthook run pre-commit
+```
+
 [Eask]: https://github.com/emacs-eask/cli
+[Nix]:  https://nixos.org/
+[lefthook]: https://github.com/evilmartians/lefthook
 
 ### Generating the manual
 

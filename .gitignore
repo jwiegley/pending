@@ -5,6 +5,7 @@
 /coverage/
 /coverage.lcov
 /profile-report.txt
+/profile-report-runs.txt
 /.pending/
 /doc/pending.html
 /result

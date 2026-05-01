@@ -1045,6 +1045,10 @@ position falls outside BUFFER's bounds."
 (defun pending-overlay (beg-or-token &optional end str)
   "Create a pending overlay or return a token's overlay.
 
+BEG-OR-TOKEN is either a buffer position (integer or marker) — in
+which case END and STR must also be supplied — or a `pending'
+struct, in which case END and STR are nil.
+
 Two call shapes are supported:
 
   (pending-overlay BEG END STR)
