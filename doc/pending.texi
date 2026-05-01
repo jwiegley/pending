@@ -334,8 +334,20 @@ the placeholder body itself.  The library binds
 still work.
 
 In adopt mode (@code{pending-make} with explicit @code{:start} and
-@code{:end}), the library does @emph{not} retroactively add
-read-only properties --- the caller owns that text.
+@code{:end}), the library by default applies the same read-only
+properties to the adopted text --- gated on
+@code{pending-protect-adopted-region} (default t).  Set the option
+to nil to opt out and leave the adopted text editable while the
+placeholder is in flight.
+
+A subtle benefit of the text-property-based protection over an
+overlay-based approach: text properties live in the buffer text
+itself and ARE inherited by indirect buffers (made via
+@code{make-indirect-buffer}), while overlays do NOT project into
+indirect views.  The default therefore extends edit protection
+across indirect-buffer projections of the placeholder's buffer ---
+the same trick @code{org-pending} uses for its own indirect-buffer
+projection.
 
 @section Auto-cancellation paths
 @cindex auto-cancellation
@@ -1150,6 +1162,28 @@ Pixel size of the SVG spinner image (square width and height).
 Default 16.  Changing this clears the SVG cache via the
 defcustom's @code{:set} hook so the next render regenerates
 images at the new size.
+@end defopt
+
+@defopt pending-protect-adopted-region
+If non-nil (the default), an adopted-mode placeholder freezes its
+existing region's text via @code{read-only}, @code{front-sticky},
+and @code{rear-nonsticky} text properties on the buffer text.  Set
+to nil to leave the adopted text editable while the placeholder is
+in flight (the v0.1.0 behaviour, which relied on the overlay's
+modification-hooks alone).
+
+A subtle but important benefit of the default: text properties live
+in the buffer string itself and ARE inherited by indirect buffers
+(made via @code{make-indirect-buffer}), while overlays are
+buffer-specific and do NOT project into indirect views.  Setting
+this option non-nil therefore extends edit protection across
+indirect-buffer projections of the placeholder's buffer.
+
+Insert-mode placeholders (no @code{:start}/@code{:end}) are always
+read-only regardless of this setting; only adopt mode is gated.
+The protection disappears naturally on resolve, reject, or cancel
+because @code{pending--swap-region} deletes the protected text
+before re-inserting plain replacement text.
 @end defopt
 
 @section Faces

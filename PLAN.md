@@ -278,11 +278,15 @@ Items intentionally postponed past the v0.1.0 tag:
   removed from v0.1 and will return alongside the SVG spinner work.
 - Description buffer in the `*Region Lock*` style of `org-pending`
   for richer diagnostics on a single placeholder.
-- Indirect-buffer projection of read-only properties (org-pending's
+- ~~Indirect-buffer projection of read-only properties (org-pending's
   `--add-overlay-projection` trick), so a placeholder's edit
-  protection survives across indirect-buffer views.
-- `pending-test--with-mocked-time` macro for deterministic fast-
-  forward testing (DESIGN.md §8).
+  protection survives across indirect-buffer views.~~ *Implemented in
+  v0.2: adopt mode applies `read-only` text properties (gated on
+  `pending-protect-adopted-region', default t).  Text properties live
+  in the buffer text itself and project into indirect buffers, so this
+  closes the gap with overlays.*
+- ~~`pending-test--with-mocked-time` macro for deterministic fast-
+  forward testing (DESIGN.md §8).~~ *Implemented in v0.2.*
 
 ---
 
@@ -302,11 +306,14 @@ Apply to every phase:
 
 Items intentionally left for after v1 ships:
 
-- SVG spinner.
-- `pending-as-promise` adapter for `aio` users.
-- `*Pending*` description buffer (org-pending-style).
-- Indirect-buffer projection.
+- SVG spinner. *Implemented in v0.2.*
+- `pending-as-promise` adapter for `aio` users. *Implemented in
+  v0.2 as the optional `pending-aio` add-on.*
+- `*Pending*` description buffer (org-pending-style). *Implemented
+  in v0.2 as `pending-describe'.*
+- Indirect-buffer projection. *Implemented in v0.2 via
+  `pending-protect-adopted-region'.*
 - `kill-emacs-query-functions` integration (gated by a defcustom
   with default nil). *Implemented in Phase 9.*
-- Pulse-on-resolve flash.
+- Pulse-on-resolve flash. *Implemented in v0.2.*
 - Group operations (`pending-cancel-group`).

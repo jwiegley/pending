@@ -37,8 +37,15 @@ authoritative design is in `DESIGN.md`; this is the scratchpad of
   ~80 LOC for v1, or push to v2? Lean toward v2 — the use case
   (debugging long-running locks) is real but `pending-list` covers
   most of it.
-- **Indirect-buffer projection**: skipped for v1. If a consumer files
-  a real bug we can port org-pending's approach (~30 LOC).
+- **Indirect-buffer projection**: implemented in v0.2 via the
+  `pending-protect-adopted-region` defcustom (default t).  In adopt
+  mode the library applies `read-only` text properties to the existing
+  text; text properties are inherited by indirect buffers and project
+  edit protection across them.  Set the option to nil to opt out and
+  restore v0.1.0's "adopt mode leaves existing text editable" behaviour.
+  No bug filed yet but indirect-buffer support is cheap; see DESIGN.md
+  §5 for the principle and `pending-test/protection-projects-into-
+  indirect-buffer'.
 - **Kill-emacs query**: org-pending blocks Emacs exit until the user
   confirms. We probably want this too, gated by a defcustom defaulting
   to nil (vs org-pending's t) — most pending placeholders should

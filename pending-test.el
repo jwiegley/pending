@@ -1707,6 +1707,88 @@ returns the same string by `eq'."
       (should (eq s1 s1b)))))
 
 
+;;; v0.2 — adopted-region read-only projection
+
+(ert-deftest pending-test/adopted-region-protected-from-edits ()
+  "By default, an adopted region is read-only while the placeholder is active.
+With `pending-protect-adopted-region' on (the default), text
+properties applied by `pending-make' adopt mode block edits to
+the adopted text via the standard `text-read-only' error.  The
+library's own resolve binds `inhibit-read-only' so the swap
+proceeds normally."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-adopt-protect*")
+      (with-current-buffer buf
+        (insert "Pre-MID-Post")
+        ;; Bytes 1..4 = "Pre-", 5..7 = "MID", 8..12 = "-Post".
+        (let ((p (pending-region 5 8 "rewriting")))
+          (goto-char 6)              ; inside MID
+          (should-error (let ((inhibit-read-only nil))
+                          (insert "X"))
+                        :type 'text-read-only)
+          (pending-finish p "DONE")
+          (should (eq (pending-status p) :resolved))
+          (should (string-match-p "Pre-DONE-Post" (buffer-string))))))))
+
+(ert-deftest pending-test/adopted-region-not-protected-when-disabled ()
+  "Setting `pending-protect-adopted-region' nil leaves adopted text editable.
+This restores the v0.1.0 behaviour where the overlay's
+modification-hooks were the sole edit-detection mechanism."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-adopt-no-protect*")
+      (with-current-buffer buf
+        (insert "Pre-MID-Post")
+        (let ((pending-protect-adopted-region nil))
+          (let ((p (pending-region 5 8 "rewriting")))
+            ;; The text in the adopted region should NOT carry the
+            ;; read-only property when protection is disabled.
+            (should-not (get-text-property 6 'read-only))
+            (pending-cancel p :test-cleanup)
+            (should (eq (pending-status p) :cancelled))))))))
+
+(ert-deftest pending-test/protection-projects-into-indirect-buffer ()
+  "Read-only properties on an adopted region are inherited by indirect buffers.
+Overlays do not project into indirect buffers, but text
+properties live in the buffer text itself and DO project.  This
+test creates an adopted-region placeholder, makes an indirect
+buffer of the host, and confirms the indirect view rejects an
+edit inside the placeholder's range with `text-read-only'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (base "*p-projection-base*")
+      (with-current-buffer base
+        (insert "AAA-XXX-BBB")
+        (let ((p (pending-region 5 8 "work")))
+          (let ((indirect (make-indirect-buffer
+                           base "*p-projection-indirect*" t)))
+            (unwind-protect
+                (with-current-buffer indirect
+                  (goto-char 6)        ; inside XXX
+                  (should-error (let ((inhibit-read-only nil))
+                                  (insert "Y"))
+                                :type 'text-read-only))
+              (when (buffer-live-p indirect) (kill-buffer indirect))))
+          ;; Cleanup so the registry empties before the host buffer dies.
+          (pending-cancel p :test-cleanup))))))
+
+(ert-deftest pending-test/adopted-region-read-only-cleared-on-resolve ()
+  "After resolve, the resolved text is editable.
+The adopted text is deleted by `pending--swap-region', so the
+read-only properties disappear with it; the inserted replacement
+text is plain (no properties), so editing post-resolve works."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-adopt-cleared*")
+      (with-current-buffer buf
+        (insert "Pre-MID-Post")
+        (let ((p (pending-region 5 8 "work")))
+          (pending-finish p "NEW")
+          (should (eq (pending-status p) :resolved))
+          ;; The replaced text contains "NEW"; inserting anywhere in it
+          ;; should now succeed without raising `text-read-only'.
+          (goto-char 6)
+          (insert "Y")
+          (should (string-match-p "NYEW" (buffer-string))))))))
+
+
 ;;; v0.2 — describe buffer
 
 (ert-deftest pending-test/describe-buffer-created ()

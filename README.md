@@ -182,9 +182,16 @@ freely, but can't edit the body. The library binds
 still work.
 
 In *adopt mode* (`pending-make` with explicit `:start` and `:end`),
-the library does *not* retroactively add read-only properties — the
-caller owns that text. In *insert mode* (no `:start`/`:end`) and
-during streaming, all inserted text is protected.
+the library by default applies the same read-only properties to the
+adopted text — gated on `pending-protect-adopted-region` (default
+`t`). Set the option to nil to opt out and leave the adopted text
+editable. The text-property-based protection lives in the buffer
+text itself, so it is inherited by indirect buffers (made via
+`make-indirect-buffer`) — this is the trick org-pending uses for
+its own indirect-buffer projection. The properties disappear
+naturally on resolve/reject/cancel because the swap deletes the
+protected text. In *insert mode* (no `:start`/`:end`) and during
+streaming, all inserted text is protected unconditionally.
 
 ### Auto-cancellation paths
 
@@ -665,6 +672,7 @@ Bindings inside the description buffer:
 | `pending-confirm-on-emacs-exit`   | `nil`        | When non-nil, prompt before exit while placeholders are active.         |
 | `pending-svg-spinner-enable`      | `t`          | On graphical frames with SVG support, render the spinner as an SVG.    |
 | `pending-svg-spinner-size`        | `16`         | Pixel size of the SVG spinner image (square).                          |
+| `pending-protect-adopted-region`  | `t`          | In adopt mode, freeze the existing region with read-only text properties (which project into indirect buffers). |
 
 Spinner styles ship with: `dots-1`, `dots-2`, `line`, `arc`,
 `clock`. Add your own:
@@ -757,7 +765,7 @@ is a condensed version of `RESEARCH.md` §1.
 | Progress bar      | Single line of text in `after-string`        | Eighth-block Unicode bar (or ASCII fallback)             |
 | Streaming         | Message-passing via `org-pending-send-update`| First-class `pending-stream-insert` / `-stream-finish`   |
 | Description UI    | `*Region Lock*` describe buffer              | Tabulated list (`pending-list`) — describe deferred      |
-| Indirect buffers  | Read-only projection                         | Not yet — overlay+text-property scope is single-buffer   |
+| Indirect buffers  | Read-only projection                         | Yes — adopt-mode read-only properties live on buffer text and project |
 | Kill-emacs query  | Built in (`kill-emacs-query-functions`)      | Same hook, gated by `pending-confirm-on-emacs-exit`      |
 
 The two libraries can coexist. Pick whichever suits your caller:
@@ -796,11 +804,12 @@ Landed in v0.2:
 - SVG spinner for graphical frames.
 - `*Region Lock*`-style description buffer for a single
   placeholder (`pending-describe`).
+- Indirect-buffer projection of read-only properties (gated on
+  `pending-protect-adopted-region`).
 
 Still on the roadmap:
 
 - `pending-as-promise` adapter for `aio` users.
-- Indirect-buffer projection of read-only properties.
 
 ## Development
 

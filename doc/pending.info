@@ -290,8 +290,18 @@ the placeholder body itself.  The library binds ‘inhibit-read-only’
 during its own operations so internal swaps still work.
 
    In adopt mode (‘pending-make’ with explicit ‘:start’ and ‘:end’), the
-library does _not_ retroactively add read-only properties -- the caller
-owns that text.
+library by default applies the same read-only properties to the adopted
+text -- gated on ‘pending-protect-adopted-region’ (default t).  Set the
+option to nil to opt out and leave the adopted text editable while the
+placeholder is in flight.
+
+   A subtle benefit of the text-property-based protection over an
+overlay-based approach: text properties live in the buffer text itself
+and ARE inherited by indirect buffers (made via ‘make-indirect-buffer’),
+while overlays do NOT project into indirect views.  The default
+therefore extends edit protection across indirect-buffer projections of
+the placeholder's buffer -- the same trick ‘org-pending’ uses for its
+own indirect-buffer projection.
 
 4.5 Auto-cancellation paths
 ===========================
@@ -962,6 +972,27 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      Default 16.  Changing this clears the SVG cache via the defcustom's
      ‘:set’ hook so the next render regenerates images at the new size.
 
+ -- User Option: pending-protect-adopted-region
+     If non-nil (the default), an adopted-mode placeholder freezes its
+     existing region's text via ‘read-only’, ‘front-sticky’, and
+     ‘rear-nonsticky’ text properties on the buffer text.  Set to nil to
+     leave the adopted text editable while the placeholder is in flight
+     (the v0.1.0 behaviour, which relied on the overlay's
+     modification-hooks alone).
+
+     A subtle but important benefit of the default: text properties live
+     in the buffer string itself and ARE inherited by indirect buffers
+     (made via ‘make-indirect-buffer’), while overlays are
+     buffer-specific and do NOT project into indirect views.  Setting
+     this option non-nil therefore extends edit protection across
+     indirect-buffer projections of the placeholder's buffer.
+
+     Insert-mode placeholders (no ‘:start’/‘:end’) are always read-only
+     regardless of this setting; only adopt mode is gated.  The
+     protection disappears naturally on resolve, reject, or cancel
+     because ‘pending--swap-region’ deletes the protected text before
+     re-inserting plain replacement text.
+
 11.2 Faces
 ==========
 
@@ -1246,8 +1277,8 @@ Index
  [index ]
 * Menu:
 
-* auto-cancellation:                     Concepts.            (line 121)
-* buffer-killed:                         Concepts.            (line 121)
+* auto-cancellation:                     Concepts.            (line 131)
+* buffer-killed:                         Concepts.            (line 131)
 * callbacks:                             Hooks and callbacks. (line   5)
 * caveats:                               Caveats.             (line   6)
 * comparison:                            Comparison.          (line   6)
@@ -1260,7 +1291,7 @@ Index
 * edit-survival:                         Concepts.            (line 101)
 * errors:                                Hooks and callbacks. (line  58)
 * ETA:                                   Indicator modes.     (line   6)
-* faces:                                 Customization.       (line  78)
+* faces:                                 Customization.       (line  99)
 * global-pending-lighter-mode:           Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <1>:       Mode-line lighter.   (line   6)
 * global-pending-lighter-mode <2>:       Mode-line lighter.   (line   7)
@@ -1301,8 +1332,8 @@ Index
 * pending-cancel <1>:                    Simple API.          (line  57)
 * pending-cancel-at-point:               Simple API.          (line  95)
 * pending-cancel-at-point <1>:           Simple API.          (line  96)
-* pending-cancelled-face:                Customization.       (line 115)
-* pending-cancelled-face <1>:            Customization.       (line 116)
+* pending-cancelled-face:                Customization.       (line 136)
+* pending-cancelled-face <1>:            Customization.       (line 137)
 * pending-confirm-on-emacs-exit:         Customization.       (line  56)
 * pending-default-spinner-style:         Customization.       (line  20)
 * pending-demo:                          Interactive UI.      (line  77)
@@ -1314,22 +1345,22 @@ Index
 * pending-describe-jump:                 Interactive UI.      (line  57)
 * pending-describe-refresh:              Interactive UI.      (line  55)
 * pending-error:                         Hooks and callbacks. (line  58)
-* pending-error-face:                    Customization.       (line 110)
-* pending-error-face <1>:                Customization.       (line 111)
-* pending-face:                          Customization.       (line  96)
-* pending-face <1>:                      Customization.       (line  97)
+* pending-error-face:                    Customization.       (line 131)
+* pending-error-face <1>:                Customization.       (line 132)
+* pending-face:                          Customization.       (line 117)
+* pending-face <1>:                      Customization.       (line 118)
 * pending-finish:                        Simple API.          (line  42)
 * pending-finish <1>:                    Simple API.          (line  43)
 * pending-fps:                           Customization.       (line   9)
 * pending-goto:                          Simple API.          (line  72)
 * pending-goto <1>:                      Simple API.          (line  73)
-* pending-highlight:                     Customization.       (line  85)
-* pending-highlight <1>:                 Customization.       (line  86)
+* pending-highlight:                     Customization.       (line 106)
+* pending-highlight <1>:                 Customization.       (line 107)
 * pending-insert:                        Simple API.          (line  34)
 * pending-insert <1>:                    Simple API.          (line  35)
 * pending-label-max-width:               Customization.       (line  50)
-* pending-lighter:                       Customization.       (line  91)
-* pending-lighter <1>:                   Customization.       (line  92)
+* pending-lighter:                       Customization.       (line 112)
+* pending-lighter <1>:                   Customization.       (line 113)
 * pending-list:                          Simple API.          (line  82)
 * pending-list <1>:                      Simple API.          (line  83)
 * pending-list-active:                   Rich API.            (line 185)
@@ -1343,16 +1374,17 @@ Index
 * pending-make <2>:                      Rich API.            (line   6)
 * pending-mode-line-string:              Mode-line lighter.   (line  20)
 * pending-mode-line-string <1>:          Mode-line lighter.   (line  21)
-* pending-progress-face:                 Customization.       (line 105)
-* pending-progress-face <1>:             Customization.       (line 106)
+* pending-progress-face:                 Customization.       (line 126)
+* pending-progress-face <1>:             Customization.       (line 127)
+* pending-protect-adopted-region:        Customization.       (line  75)
 * pending-region:                        Simple API.          (line  10)
 * pending-region <1>:                    Simple API.          (line  11)
 * pending-region-map:                    Interactive UI.      (line  70)
 * pending-region-map <1>:                Interactive UI.      (line  71)
 * pending-reject:                        Rich API.            (line 123)
 * pending-reject <1>:                    Rich API.            (line 124)
-* pending-spinner-face:                  Customization.       (line 102)
-* pending-spinner-face <1>:              Customization.       (line 103)
+* pending-spinner-face:                  Customization.       (line 123)
+* pending-spinner-face <1>:              Customization.       (line 124)
 * pending-spinner-styles:                Customization.       (line  25)
 * pending-status:                        Rich API.            (line 177)
 * pending-status <1>:                    Rich API.            (line 178)
@@ -1370,7 +1402,7 @@ Index
 * quick start:                           Quick start.         (line   6)
 * read-only:                             Concepts.            (line 101)
 * recipes:                               Integrations.        (line   6)
-* region-deleted:                        Concepts.            (line 121)
+* region-deleted:                        Concepts.            (line 131)
 * registry:                              Concepts.            (line  54)
 * requirements:                          Installation.        (line   6)
 * rich API:                              Rich API.            (line   6)
@@ -1381,7 +1413,7 @@ Index
 * states, lifecycle:                     Concepts.            (line  17)
 * SVG spinner:                           Indicator modes.     (line  40)
 * testing:                               Development.         (line   5)
-* timed-out:                             Concepts.            (line 121)
+* timed-out:                             Concepts.            (line 131)
 * token:                                 Concepts.            (line   9)
 * url-retrieve:                          Integrations.        (line  72)
 * v0.2:                                  Roadmap.             (line   6)
@@ -1394,20 +1426,20 @@ Node: Introduction1942
 Node: Installation3855
 Node: Quick start4767
 Node: Concepts6068
-Node: Simple API11441
-Node: Rich API16028
-Node: Indicator modes24388
-Node: Integrations26633
-Node: Interactive UI31111
-Node: Mode-line lighter33991
-Node: Customization34988
-Node: Hooks and callbacks40410
-Node: Comparison42548
-Node: Caveats44885
-Node: Roadmap46231
-Node: Development46876
-Node: License48549
-Node: Index48869
+Node: Simple API12055
+Node: Rich API16642
+Node: Indicator modes25002
+Node: Integrations27247
+Node: Interactive UI31725
+Node: Mode-line lighter34605
+Node: Customization35602
+Node: Hooks and callbacks42190
+Node: Comparison44328
+Node: Caveats46665
+Node: Roadmap48011
+Node: Development48656
+Node: License50329
+Node: Index50649
 
 End Tag Table
 

@@ -265,6 +265,35 @@ size."
   :group 'pending
   :package-version '(pending . "0.2.0"))
 
+(defcustom pending-protect-adopted-region t
+  "If non-nil, freeze an adopted region's text while a placeholder is active.
+When `pending-region BEG END STR' (or `pending-make' with both
+START and END) adopts an existing buffer region, this option
+controls whether the adopted text is made read-only via
+`read-only' / `front-sticky' / `rear-nonsticky' text properties
+on the buffer text itself.
+
+The principle is \"the placeholder is read-only while pending\":
+adopted text is about to be replaced by the async result, so
+editing it mid-flight would race the resolve.  Defaults to t.
+
+A subtle but important benefit: text properties live in the
+buffer string itself and ARE inherited by indirect buffers (made
+via `make-indirect-buffer'), while overlays are buffer-specific
+and do NOT project into indirect views.  Setting this option
+non-nil therefore extends edit protection across indirect-buffer
+projections of the placeholder's buffer.
+
+Set to nil to leave the adopted region editable while the
+placeholder is in flight (matches v0.1.0 behaviour where adopt
+mode relied on the overlay's `modification-hooks' alone — fast
+to set up, but does not survive into indirect buffers).
+Insert-mode placeholders are always read-only regardless of this
+setting."
+  :type 'boolean
+  :group 'pending
+  :package-version '(pending . "0.2.0"))
+
 
 ;;; Faces
 
@@ -784,10 +813,16 @@ the text baseline correctly."
 
 (defun pending--svg-cached (frame-index frames-count style face size)
   "Return a cached SVG spinner string, creating it if absent.
+FRAME-INDEX is the rotation index (0..FRAMES-COUNT-1).
+FRAMES-COUNT is the number of equally-spaced rotations in the
+animation cycle.  STYLE is the spinner style symbol (used in the
+cache key only).  FACE supplies the stroke colour.  SIZE is the
+SVG width and height in pixels.
+
 The cache key is (FACE STYLE FRAME-INDEX SIZE) so distinct styles,
-faces, sizes, and per-style rotation positions are all
-memoized independently.  See `pending--svg-spinner' for the
-generation details."
+faces, sizes, and per-style rotation positions are all memoized
+independently.  See `pending--svg-spinner' for the generation
+details."
   (let ((key (list face style frame-index size)))
     (or (gethash key pending--svg-cache)
         (puthash key
@@ -1082,10 +1117,13 @@ Insertion modes:
     the user cannot edit it while the async work is in flight; the
     library lifts the read-only restriction during its own resolve.
   - If START and END are both non-nil (positions or markers), adopt
-    the existing region [START, END]; do not insert text.  Adopt mode
-    does NOT retroactively add read-only properties to the existing
-    text — the caller owns that text and should add such properties
-    itself before calling `pending-make' if it wants edit protection.
+    the existing region [START, END]; do not insert text.  When
+    `pending-protect-adopted-region' is non-nil (the default), the
+    adopted text is made read-only via text properties so the user
+    cannot edit the placeholder while the async work is in flight;
+    the protection survives into indirect buffers since it lives on
+    the buffer text itself.  Set the option to nil to opt out and
+    leave the adopted text editable.
   - It is an error to supply only one of START or END.
 
 LABEL is a short string shown inside the placeholder, default
@@ -1190,7 +1228,26 @@ position falls outside BUFFER's bounds."
           (when (> s e)
             (signal 'pending-error (list "START after END" s e)))
           (setq start-marker (copy-marker s nil))
-          (setq end-marker (copy-marker e nil))))))
+          (setq end-marker (copy-marker e nil))
+          ;; Apply read-only text properties to the adopted region so
+          ;; the user cannot edit the placeholder mid-flight.  Text
+          ;; properties live in the buffer text itself and ARE inherited
+          ;; by indirect buffers, so this also projects edit protection
+          ;; into any indirect view.  Skipped when
+          ;; `pending-protect-adopted-region' is nil or when the range
+          ;; is empty (no text to protect).  The library binds
+          ;; `inhibit-read-only' inside its own resolve / cancel /
+          ;; reject path so the swap is not blocked.  On terminal
+          ;; transition, `pending--swap-region' deletes the adopted
+          ;; range, so the read-only properties disappear together
+          ;; with the protected text — no separate cleanup needed.
+          (when (and pending-protect-adopted-region (< s e))
+            (let ((inhibit-read-only t))
+              (add-text-properties
+               s e
+               '(read-only t
+                           front-sticky (read-only)
+                           rear-nonsticky (read-only)))))))))
     ;; Front- and rear-advance both nil for now; Phase 6 will flip the
     ;; rear when streaming begins.
     (let* ((ov (make-overlay (marker-position start-marker)

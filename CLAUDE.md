@@ -174,6 +174,22 @@ own delete+insert). The overlay's `modification-hooks` exist solely to
 DETECT region deletion (auto-cancel with `:region-deleted`); they don't
 block edits.
 
+As of v0.2, adopt mode (`pending-region BEG END STR`) ALSO applies the
+same read-only properties to the existing region by default — gated on
+`pending-protect-adopted-region` (default `t`). The principle is "the
+placeholder is read-only while pending"; the user shouldn't edit text
+that is about to be replaced by the async result. A second benefit is
+**indirect-buffer projection**: text properties live in the buffer text
+itself and ARE inherited by indirect buffers (overlays are buffer-
+specific and aren't), so the protection survives across
+`make-indirect-buffer` views — closing the gap that org-pending uses
+its `--add-overlay-projection` trick to plug. The properties disappear
+naturally on resolve/reject/cancel because `pending--swap-region`
+deletes the protected text. To restore the v0.1.0 behaviour where adopt
+mode left existing text editable, set
+`pending-protect-adopted-region` to nil — only the overlay's
+modification-hooks then watch for region deletion.
+
 ### Process sentinels: dispatch on `process-status`, not on event strings
 
 `pending--process-sentinel` reads `(process-status proc)` and pcase's on
