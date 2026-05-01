@@ -210,13 +210,34 @@ placeholder is still in flight when Emacs is being killed."
 
 ;;; Faces
 
-(defface pending-face
+(defface pending-highlight
   '((((class color) (background dark))
      :background "#1e3a5f" :foreground "#a8c5e8" :extend t)
     (((class color) (background light))
      :background "#e8f0fa" :foreground "#1f4a78" :extend t)
     (t :inherit shadow))
-  "Face for the placeholder body — that is, the label text."
+  "Face for the highlighted region of a pending overlay (BEG..END).
+Applied to the placeholder body so the user can see where the
+asynchronously-arriving content will land."
+  :group 'pending
+  :package-version '(pending . "0.1.0"))
+
+(defface pending-lighter
+  '((((class color))
+     :foreground "white" :background "red" :weight bold)
+    (t :inverse-video t :weight bold))
+  "Face for the lighter STR shown at BEG of a pending overlay.
+Bold white-on-red by default for high visibility — the lighter is
+a visual badge attached to the overlay's `before-string', not text
+in the buffer."
+  :group 'pending
+  :package-version '(pending . "0.1.0"))
+
+(defface pending-face
+  '((t :inherit pending-highlight))
+  "Compatibility alias for `pending-highlight'.
+Older code paths reference `pending-face' for the placeholder body;
+new code should prefer `pending-highlight'."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
