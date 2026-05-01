@@ -519,7 +519,7 @@ invariant)."
 
 ```elisp
 (cl-defun pending-update (p &key label percent eta indicator)
-  "Update P's metadata mid-flight.
+  "Update P's metadata while it is still active.
 Any non-nil keyword updates the corresponding slot.  If INDICATOR
 changes, the visual decoration is re-rendered on next tick.  If
 PERCENT or ETA changes, the bar is re-computed.

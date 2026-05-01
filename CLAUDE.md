@@ -178,7 +178,7 @@ block edits.
 As of v0.2, adopt mode (`pending-region BEG END STR`) ALSO applies the
 same read-only properties to the existing region by default — gated on
 `pending-protect-adopted-region` (default `t`). The principle is "the
-placeholder is read-only while pending"; the user shouldn't edit text
+placeholder is read-only while active"; the user shouldn't edit text
 that is about to be replaced by the async result. A second benefit is
 **indirect-buffer projection**: text properties live in the buffer text
 itself and ARE inherited by indirect buffers (overlays are buffer-

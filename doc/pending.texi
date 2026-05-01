@@ -106,7 +106,7 @@ The swap from placeholder to result is exactly one undo step.  No
 torn intermediate states, no partial-edit history pollution.
 
 @item Edit-survival
-While pending, the placeholder text is read-only.  Surrounding edits
+While the placeholder is active, its text is read-only.  Surrounding edits
 adjust the placeholder's markers automatically; if the user deletes
 the region outright, the placeholder cancels itself rather than
 resolving into deleted space.
@@ -118,7 +118,7 @@ provides a small primitive (token + atomic swap) that integrates with
 or your own callback-driven pattern.
 @end table
 
-A single global animation timer drives all in-flight placeholders, so
+A single global animation timer drives all active placeholders, so
 spinning N concurrent regions costs only N overlay decorations per
 tick, not N timers.
 
@@ -192,7 +192,7 @@ Place the cursor on a placeholder and run @kbd{M-x
 pending-cancel-at-point}.  The placeholder's overlay also binds
 @kbd{RET} and @kbd{mouse-1} to the same command via
 @code{pending-region-map}, so a single @kbd{RET} on the highlighted
-region cancels the in-flight work.
+region cancels the active work.
 
 @section Show the lighter mode
 
@@ -339,7 +339,7 @@ In adopt mode (@code{pending-make} with explicit @code{:start} and
 properties to the adopted text --- gated on
 @code{pending-protect-adopted-region} (default t).  Set the option
 to nil to opt out and leave the adopted text editable while the
-placeholder is in flight.
+placeholder is active.
 
 A subtle benefit of the text-property-based protection over an
 overlay-based approach: text properties live in the buffer text
@@ -356,7 +356,7 @@ projection.
 @cindex buffer-killed
 @cindex timed-out
 
-Several edge conditions auto-cancel an in-flight placeholder so it
+Several edge conditions auto-cancel an active placeholder so it
 cannot strand state:
 
 @table @strong
@@ -604,7 +604,7 @@ deadline timer, and installs the buffer-kill hook locally.  Signals
 
 @deffn Function pending-update p &key label percent eta indicator
 @findex pending-update
-Mutate slots mid-flight without changing state.  Useful when the
+Mutate slots while active without changing state.  Useful when the
 caller learns more about progress --- e.g. switch from @code{:spinner}
 to @code{:percent} once the total work size is known.
 
@@ -1251,7 +1251,7 @@ If non-nil (the default), an adopted-mode placeholder freezes its
 existing region's text via @code{read-only}, @code{front-sticky},
 and @code{rear-nonsticky} text properties on the buffer text.  Set
 to nil to leave the adopted text editable while the placeholder is
-in flight (the v0.1.0 behaviour, which relied on the overlay's
+active (the v0.1.0 behaviour, which relied on the overlay's
 modification-hooks alone).
 
 A subtle but important benefit of the default: text properties live

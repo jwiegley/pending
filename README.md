@@ -11,7 +11,7 @@ So I wrote `pending`. It marks a region (or a single point) as "the
 answer goes here, hold tight," shows a small animated lighter while the
 async work runs, and then atomically swaps the placeholder for the
 result. One undo step. The placeholder text is read-only while it's
-in flight, so I can't accidentally type into it. If I delete it, the
+active, so I can't accidentally type into it. If I delete it, the
 underlying request gets cancelled too.
 
 ```text
@@ -34,7 +34,7 @@ Calling Claude  ⠋ [████████░░░░░░░░] 47%
                  (pending-cancel tok)))))
 ```
 
-While the request is in flight, a bold red `Calling Claude` lighter
+While the request is active, a bold red `Calling Claude` lighter
 sits at point. A spinner animates beside it. When the callback fires,
 the lighter and spinner go away and the response text takes their
 place. Everything happens as one undo step.
@@ -48,7 +48,7 @@ A few things weren't working for me:
   at a static buffer.
 - **Atomic swap**: replacement is one undo step. No torn intermediate
   states where half the response is in the buffer and half isn't.
-- **Edit-survival**: while pending, the placeholder body is read-only.
+- **Edit-survival**: while active, the placeholder body is read-only.
   Edits before and after adjust the placeholder's markers
   automatically. If I do delete the region outright, the placeholder
   cancels itself.
@@ -195,7 +195,7 @@ streaming, all inserted text is protected unconditionally.
 
 ### Auto-cancellation paths
 
-A few edge conditions auto-cancel an in-flight placeholder so it
+A few edge conditions auto-cancel an active placeholder so it
 can't strand state:
 
 - **Region deletion** — if the user deletes the entire placeholder
@@ -357,7 +357,7 @@ Insert mode vs adopt mode:
 
 ### `pending-update P &key label percent eta indicator`
 
-Mutate slots mid-flight without changing state. Useful when the
+Mutate slots while active without changing state. Useful when the
 caller learns more about progress — switch from `:spinner` to
 `:percent` once the total work size is known.
 

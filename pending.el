@@ -192,7 +192,7 @@ Implemented via `pending--kill-emacs-query', which is registered on
 `kill-emacs-query-functions' at load time.  When this option is nil
 \(the default) the query function returns t unconditionally and the
 exit is not blocked.  Set to t to be asked for confirmation if any
-placeholder is still in flight when Emacs is being killed."
+placeholder is still active when Emacs is being killed."
   :type 'boolean
   :group 'pending
   :package-version '(pending . "0.1.0"))
@@ -273,9 +273,9 @@ controls whether the adopted text is made read-only via
 `read-only' / `front-sticky' / `rear-nonsticky' text properties
 on the buffer text itself.
 
-The principle is \"the placeholder is read-only while pending\":
+The principle is \"the placeholder is read-only while active\":
 adopted text is about to be replaced by the async result, so
-editing it mid-flight would race the resolve.  Defaults to t.
+editing it during async work would race the resolve.  Defaults to t.
 
 A subtle but important benefit: text properties live in the
 buffer string itself and ARE inherited by indirect buffers (made
@@ -285,8 +285,8 @@ non-nil therefore extends edit protection across indirect-buffer
 projections of the placeholder's buffer.
 
 Set to nil to leave the adopted region editable while the
-placeholder is in flight (matches v0.1.0 behaviour where adopt
-mode relied on the overlay's `modification-hooks' alone — fast
+placeholder is active (matches v0.1.0 behaviour where adopt
+mode relied on the overlay's `modification-hooks' alone -- fast
 to set up, but does not survive into indirect buffers).
 Insert-mode placeholders are always read-only regardless of this
 setting."
@@ -717,7 +717,7 @@ key.
 See also: `pending-spinner-styles' (user-customizable counterpart).")
 
 (defvar pending--global-timer nil
-  "Single timer driving all in-flight spinner animations.
+  "Single timer driving all active spinner animations.
 Created lazily by `pending--ensure-timer' when the first placeholder is
 made; parked by `pending--park-timer' or `pending--tick' once the
 registry has no active placeholders left to animate.")
@@ -1088,7 +1088,7 @@ again at the next available tick."
     m)
   "Keymap installed on the placeholder overlay.
 Bound to `RET' and `mouse-1' for `pending-cancel-at-point' so the user
-can cancel an in-flight placeholder by activating it directly.")
+can cancel an active placeholder by activating it directly.")
 
 
 ;;; Public API: construction
@@ -1114,13 +1114,13 @@ of BUFFER so it can be enumerated.
 Insertion modes:
   - If START and END are both nil, insert a new placeholder at point
     in BUFFER.  The inserted label text is propertized read-only so
-    the user cannot edit it while the async work is in flight; the
+    the user cannot edit it while the async work is active; the
     library lifts the read-only restriction during its own resolve.
   - If START and END are both non-nil (positions or markers), adopt
     the existing region [START, END]; do not insert text.  When
     `pending-protect-adopted-region' is non-nil (the default), the
     adopted text is made read-only via text properties so the user
-    cannot edit the placeholder while the async work is in flight;
+    cannot edit the placeholder while the async work is active;
     the protection survives into indirect buffers since it lives on
     the buffer text itself.  Set the option to nil to opt out and
     leave the adopted text editable.
@@ -1193,9 +1193,9 @@ position falls outside BUFFER's bounds."
         (let ((insert-point (point)))
           (setq start-marker (copy-marker insert-point nil))
           ;; Insert the label text propertized read-only so the user
-          ;; cannot edit the placeholder while the async work is in
-          ;; flight.  `front-sticky (read-only)' makes insertions just
-          ;; before the placeholder block too — otherwise a user
+          ;; cannot edit the placeholder while the async work is
+          ;; active.  `front-sticky (read-only)' makes insertions just
+          ;; before the placeholder block too -- otherwise a user
           ;; positioned at the start could sneak text in front.
           ;; `rear-nonsticky (read-only)' makes insertions immediately
           ;; after the placeholder explicitly allowed.  The library's
@@ -1230,10 +1230,10 @@ position falls outside BUFFER's bounds."
           (setq start-marker (copy-marker s nil))
           (setq end-marker (copy-marker e nil))
           ;; Apply read-only text properties to the adopted region so
-          ;; the user cannot edit the placeholder mid-flight.  Text
-          ;; properties live in the buffer text itself and ARE inherited
-          ;; by indirect buffers, so this also projects edit protection
-          ;; into any indirect view.  Skipped when
+          ;; the user cannot edit the placeholder while it is active.
+          ;; Text properties live in the buffer text itself and ARE
+          ;; inherited by indirect buffers, so this also projects edit
+          ;; protection into any indirect view.  Skipped when
           ;; `pending-protect-adopted-region' is nil or when the range
           ;; is empty (no text to protect).  The library binds
           ;; `inhibit-read-only' inside its own resolve / cancel /
@@ -1322,7 +1322,7 @@ position falls outside BUFFER's bounds."
                              (pending-label p)
                              (pending-status p))))
       ;; Bind RET / mouse-1 over the placeholder so the user can cancel
-      ;; an in-flight placeholder interactively without typing the
+      ;; an active placeholder interactively without typing the
       ;; command's name.  See `pending-region-map'.
       (overlay-put ov 'keymap pending-region-map)
       (pending--register p)
@@ -1830,10 +1830,10 @@ Return P."
   p)
 
 
-;;; Public API: mid-flight updates
+;;; Public API: live updates
 
 (cl-defun pending-update (p &key label percent eta indicator)
-  "Update P's metadata mid-flight.  Mutates the named slots only.
+  "Update P's metadata while it is still active.  Mutates the named slots only.
 LABEL, PERCENT, ETA, and INDICATOR replace the corresponding slots
 when non-nil.  No state transition happens; the next animation tick
 will pick up the new values.  Return P.
@@ -1857,8 +1857,8 @@ unchanged."
     (when eta       (setf (pending-eta p) eta))
     (when indicator (setf (pending-indicator p) indicator))
     ;; Force the next tick's spinner glyph to redraw even though the
-    ;; frame index hasn't advanced, so a mid-flight `:spinner-style'
-    ;; or `:indicator' change picks up immediately.
+    ;; frame index hasn't advanced, so a live `:spinner-style' or
+    ;; `:indicator' change picks up immediately.
     (setf (pending-last-frame p) nil)
     p)))
 
