@@ -143,7 +143,10 @@ Callers can override per region by passing :spinner-style to
     (clock  . ["🕛" "🕐" "🕑" "🕒" "🕓" "🕔" "🕕" "🕖" "🕗" "🕘" "🕙" "🕚"]))
   "Alist mapping spinner style symbols to vectors of frame strings.
 Each value is a vector of single-glyph strings used in cyclic order.
-The default style is selected by `pending-default-spinner-style'."
+The default style is selected by `pending-default-spinner-style'.
+
+See also: `pending--spinner-frames-fallback' (built-in defaults that
+back up this user-customizable alist when a key is missing)."
   :type '(alist :key-type symbol
                 :value-type (vector string))
   :group 'pending
@@ -206,8 +209,11 @@ remains available in the placeholder's tooltip."
 
 (defcustom pending-confirm-on-emacs-exit nil
   "If non-nil, prompt before exiting Emacs while placeholders are active.
-Currently declared for forward compatibility; the corresponding
-`kill-emacs-query-functions' integration is not yet wired up."
+Implemented via `pending--kill-emacs-query', which is registered on
+`kill-emacs-query-functions' at load time.  When this option is nil
+\(the default) the query function returns t unconditionally and the
+exit is not blocked.  Set to t to be asked for confirmation if any
+placeholder is still in flight when Emacs is being killed."
   :type 'boolean
   :group 'pending
   :package-version '(pending . "0.1.0"))
@@ -508,7 +514,9 @@ collapsed to zero length (the user has removed the entire region)."
 The user-facing `pending-spinner-styles' defcustom shadows this; the
 fallback ensures a vector is always available even if the user has
 intentionally narrowed `pending-spinner-styles' or supplied an unknown
-key.")
+key.
+
+See also: `pending-spinner-styles' (user-customizable counterpart).")
 
 (defvar pending--global-timer nil
   "Single timer driving all in-flight spinner animations.
@@ -1452,7 +1460,7 @@ long labels do not break the layout."
           (list p
                 (vector (symbol-name (pending-id p))
                         buf-name
-                        (truncate-string-to-width label 29 0 nil "…")
+                        (truncate-string-to-width label 30 0 nil "…")
                         status
                         elapsed
                         eta
@@ -1574,16 +1582,81 @@ that construct via `delq' on its identity."
           (delq pending--mode-line-construct global-mode-string))))
 
 
+;;; Emacs-exit confirmation
+
+(defun pending--kill-emacs-query ()
+  "Block Emacs exit if active placeholders exist and confirmation is enabled.
+Installed on `kill-emacs-query-functions' at load time.  Returns t
+\(allow exit) when `pending-confirm-on-emacs-exit' is nil, when no
+active placeholders are registered, or when the user answers `yes' to
+the prompt; returns nil (block exit) when the user answers `no'."
+  (or (not pending-confirm-on-emacs-exit)
+      (let ((actives (pending-list-active)))
+        (or (null actives)
+            (yes-or-no-p
+             (format "%d active pending placeholder%s; quit anyway? "
+                     (length actives)
+                     (if (= 1 (length actives)) "" "s")))))))
+
+(add-hook 'kill-emacs-query-functions #'pending--kill-emacs-query)
+
+
+;;; Demo
+
+;;;###autoload
+(defun pending-demo ()
+  "Open *pending-demo* with several concurrent placeholders.
+Demonstrates spinner, percent, and ETA indicators with varied
+durations.  Useful for visual inspection of the library on the
+current theme.
+
+Resolves placeholders automatically over the course of about 12
+seconds."
+  (interactive)
+  (let ((buf (get-buffer-create "*pending-demo*")))
+    (pop-to-buffer buf)
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer))
+      (insert "Pending demo:\n\n")
+      (insert "Spinner (3s):    ")
+      (let ((p (pending-make buf :label "Calling A"
+                             :indicator :spinner)))
+        (run-at-time 3 nil (lambda () (when (pending-active-p p)
+                                        (pending-resolve p "A done")))))
+      (insert "\nETA (8s):        ")
+      (let ((p (pending-make buf :label "Calling B"
+                             :indicator :eta :eta 8.0)))
+        (run-at-time 8 nil (lambda () (when (pending-active-p p)
+                                        (pending-resolve p "B done")))))
+      (insert "\nPercent (0..1):  ")
+      (let ((p (pending-make buf :label "Calling C"
+                             :indicator :percent :percent 0.0)))
+        (dotimes (i 10)
+          (run-at-time (* (1+ i) 1.0) nil
+                       (lambda ()
+                         (when (pending-active-p p)
+                           (pending-update p :percent (/ (1+ i) 10.0))
+                           (when (= i 9)
+                             (pending-resolve p "C done")))))))
+      (insert "\n\nPress `q' to bury this buffer.\n")
+      (insert "Use `M-x pending-cancel-at-point' (or RET on a placeholder) to cancel.\n")
+      (insert "Use `M-x pending-list' to see all active placeholders.\n")
+      (goto-char (point-min)))))
+
+
 ;;; Unload cleanup
 
 (defun pending-unload-function ()
   "Tear down `pending' global state on `unload-feature'.
 Called automatically by `unload-feature'.  Removes the
-`window-buffer-change-functions' hook and cancels the global
-animation timer.  Returning nil lets `unload-feature' continue with
-its standard cleanup of symbols defined in this file."
+`window-buffer-change-functions' and `kill-emacs-query-functions'
+hooks and cancels the global animation timer.  Returning nil lets
+`unload-feature' continue with its standard cleanup of symbols
+defined in this file."
   (remove-hook 'window-buffer-change-functions
                #'pending--on-window-buffer-change)
+  (remove-hook 'kill-emacs-query-functions #'pending--kill-emacs-query)
   (when (timerp pending--global-timer)
     (cancel-timer pending--global-timer))
   (setq pending--global-timer nil)
