@@ -50,6 +50,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'pending)
 ;; `warning-minimum-log-level' is declared in `warnings'; loading the
 ;; library here makes its `defvar' visible so the `let' bindings below
@@ -100,10 +101,23 @@ timer is cancelled on exit so it cannot fire after BODY returns."
   (should (pending-p (pending--make-struct :id 'p :label "x"))))
 
 (ert-deftest pending-test/gen-id-monotonic ()
-  "`pending--gen-id' returns successively-numbered symbols."
+  "`pending--gen-id' returns successively-numbered uninterned symbols.
+The IDs are uninterned (so they don't leak into the global obarray)
+but their `symbol-name' encodes a monotonic counter so the registry
+ordering and the *Pending* list view stay deterministic."
   (let ((pending--next-id 0))
-    (should (eq (pending--gen-id) 'pending-1))
-    (should (eq (pending--gen-id) 'pending-2))))
+    (let ((s1 (pending--gen-id))
+          (s2 (pending--gen-id)))
+      (should (symbolp s1))
+      (should (symbolp s2))
+      ;; Uninterned: not `eq' to the equally-named interned symbol.
+      (should-not (eq s1 'pending-1))
+      (should-not (eq s2 'pending-2))
+      ;; Names encode the monotonic counter.
+      (should (equal (symbol-name s1) "pending-1"))
+      (should (equal (symbol-name s2) "pending-2"))
+      ;; Distinct symbols even when names collide with interned ones.
+      (should-not (eq s1 s2)))))
 
 
 ;;; Phase 2 — state transitions
@@ -340,6 +354,24 @@ into a no-op so we run the user callback exactly once."
          (pending-cancel p :outer)
          (should (eq (pending-status p) :cancelled))
          (should (= calls 1)))))))
+
+(ert-deftest pending-test/cancel-survives-on-cancel-quit ()
+  "If on-cancel signals quit, `pending-cancel' still transitions state.
+Regression: the `condition-case' around the on-cancel callback used to
+handle only `error', so a `quit' signal (e.g. user types C-g during a
+`y-or-n-p' inside the callback) propagated past the `unwind-protect'
+cleanup and skipped `pending--resolve-internal', wedging the placeholder
+in a non-terminal state."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-quit*")
+     (with-current-buffer buf
+       (let ((p (pending-make
+                 buf
+                 :label "X"
+                 :on-cancel (lambda (_) (signal 'quit nil)))))
+         (let ((inhibit-message t))    ; silence the warning
+           (pending-cancel p :user))
+         (should (eq (pending-status p) :cancelled)))))))
 
 (ert-deftest pending-test/on-resolve-fires-for-all-terminals ()
   "ON-RESOLVE callback fires once for :resolved, :rejected, :cancelled."

@@ -52,7 +52,8 @@ mechanical.
             frame-vector)
       - [x] `pending-bar-style` (`'eighths` or `'ascii`)
       - [x] `pending-bar-family` (default nil)
-      - [x] `pending-fringe-bitmap` (default nil)
+      - [x] ~~`pending-fringe-bitmap` (default nil)~~ — *removed for
+            v0.1; deferred to v0.2 (see Deferred section below).*
       - [x] `pending-allow-read-only` (default nil)
       - [x] `pending-label-max-width` (default 60)
       - [x] `pending-confirm-on-emacs-exit` (default nil)
@@ -266,6 +267,10 @@ Items intentionally postponed past the v0.1.0 tag:
   callback shape is the v0.1 commitment.
 - SVG spinner for graphical frames (would render with `svg.el`); v0.1
   ships with text-only Unicode spinners.
+- Fringe bitmap indicator beside the placeholder for off-screen
+  visibility in graphical frames. The `pending-fringe-bitmap`
+  defcustom was scaffolded earlier but never wired up; it has been
+  removed from v0.1 and will return alongside the SVG spinner work.
 - Description buffer in the `*Region Lock*` style of `org-pending`
   for richer diagnostics on a single placeholder.
 - Indirect-buffer projection of read-only properties (org-pending's

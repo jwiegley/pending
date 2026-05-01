@@ -177,17 +177,6 @@ misalignment."
   :group 'pending
   :package-version '(pending . "0.1.0"))
 
-(defcustom pending-fringe-bitmap nil
-  "Optional fringe bitmap symbol shown beside placeholders, or nil.
-When non-nil, this should be the symbol naming a fringe bitmap defined
-via `define-fringe-bitmap'.  It gives off-screen visibility — the user
-can scroll past the placeholder and still see a marker in the fringe.
-Has no effect in terminal frames."
-  :type '(choice (const :tag "No fringe bitmap" nil)
-                 (symbol :tag "Bitmap symbol"))
-  :group 'pending
-  :package-version '(pending . "0.1.0"))
-
 (defcustom pending-allow-read-only nil
   "If non-nil, allow placement of placeholders in read-only buffers.
 By default `pending-make' refuses to operate on a buffer where
@@ -293,10 +282,13 @@ alignment under variable-pitch buffer faces."
   "Monotonic counter feeding `pending--gen-id'.")
 
 (defun pending--gen-id ()
-  "Return a freshly-generated identifier symbol for a pending struct.
+  "Return a fresh, uninterned identifier symbol for a pending struct.
 The returned symbol has the form `pending-N' where N is a monotonic
-counter; the symbols are not interned across Emacs sessions."
-  (intern (format "pending-%d" (cl-incf pending--next-id))))
+counter.  Uninterned symbols are not added to the global obarray, so
+generating placeholders does not leak symbols across an Emacs session.
+The buffer-global registry uses `eq' for comparison, which works
+correctly with uninterned symbols."
+  (make-symbol (format "pending-%d" (cl-incf pending--next-id))))
 
 
 ;;; Registries
@@ -845,7 +837,21 @@ position falls outside BUFFER's bounds."
     (signal 'pending-error
             (list "must supply both START and END or neither")))
   (let* ((id (pending--gen-id))
-         (resolved-label (or label "Pending"))
+         (raw-label (or label "Pending"))
+         ;; Honour `pending-label-max-width': the inserted label is
+         ;; truncated with an ellipsis so a very long string (e.g. a
+         ;; user prompt or stack trace) does not blow out the layout.
+         ;; The struct's `label' slot stores this truncated form per
+         ;; the docstring on `pending-label-max-width' — callers that
+         ;; need the original should keep it in their own state.
+         (resolved-label
+          (if (and (integerp pending-label-max-width)
+                   (> pending-label-max-width 0)
+                   (> (length raw-label) pending-label-max-width))
+              (truncate-string-to-width
+               raw-label (max 1 pending-label-max-width)
+               0 nil "…")
+            raw-label))
          (resolved-indicator (or indicator :spinner))
          (resolved-spinner (or spinner-style pending-default-spinner-style))
          (resolved-face (or face 'pending-face))
@@ -1032,7 +1038,19 @@ Return t on success, or nil if P was already terminal."
                 'pending
                 (format "on-cancel callback for %s signaled: %S"
                         (pending-id p) err)
-                :error))))
+                :error))
+              (quit
+               ;; If on-cancel signals quit (e.g. user types C-g during a
+               ;; `y-or-n-p' inside the callback), the quit would otherwise
+               ;; propagate past this `unwind-protect' cleanup and skip the
+               ;; subsequent `pending--resolve-internal' below — leaving the
+               ;; placeholder wedged in a non-terminal state.  Convert quit
+               ;; into a warning so the cancel pipeline still completes.
+               (display-warning
+                'pending
+                (format "on-cancel callback for %s quit — proceeding with cancel"
+                        (pending-id p))
+                :warning))))
         (setf (pending-in-resolve p) nil))
       (pending--resolve-internal
        p :cancelled effective-reason
@@ -1411,7 +1429,15 @@ directly via `tabulated-list-get-id'.
 
 \\{pending-list-mode-map}"
   (setq tabulated-list-format
-        [("ID" 16 t)
+        [("ID" 16
+          (lambda (a b)
+            ;; Sort numerically by the trailing integer in the id symbol's
+            ;; name.  Lexicographic sort (the default `t' predicate) puts
+            ;; "pending-12" before "pending-2" once the count exceeds 9.
+            (< (string-to-number
+                (replace-regexp-in-string "[^0-9]" "" (aref (cadr a) 0)))
+               (string-to-number
+                (replace-regexp-in-string "[^0-9]" "" (aref (cadr b) 0))))))
          ("Buffer" 24 t)
          ("Label" 30 t)
          ("Status" 12 t)
