@@ -39,19 +39,21 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides Phase 7: the core lifecycle plus
+;; This file currently provides Phase 8: the core lifecycle plus
 ;; spinner animation plus determinate and ETA progress bars plus
-;; edit-survival plus streaming plus process integration.  On top of
-;; the Phase 1 skeleton (customization group, faces, struct, error
-;; symbol, registries) and Phase 2 core lifecycle (`pending-make' in
-;; insert and adopt modes, `pending-resolve', `pending-reject',
-;; `pending-cancel', `pending-update', the public predicates and
-;; accessors, registry sync, the `kill-buffer-hook' teardown),
-;; Phase 3 added a single global animation timer that walks the
-;; registry and decorates each visible placeholder's overlay
-;; `before-string' with a spinner glyph.  Phase 4 dispatches the
-;; after-string render on `(pending-indicator p)' so `:percent' shows
-;; a determinate bar plus a percentage and `:eta' shows a
+;; edit-survival plus streaming plus process integration plus the
+;; interactive UI (a tabulated-list lister, a cancel-at-point
+;; command, the overlay keymap, and an opt-in mode-line lighter).
+;; On top of the Phase 1 skeleton (customization group, faces,
+;; struct, error symbol, registries) and Phase 2 core lifecycle
+;; (`pending-make' in insert and adopt modes, `pending-resolve',
+;; `pending-reject', `pending-cancel', `pending-update', the public
+;; predicates and accessors, registry sync, the `kill-buffer-hook'
+;; teardown), Phase 3 added a single global animation timer that
+;; walks the registry and decorates each visible placeholder's
+;; overlay `before-string' with a spinner glyph.  Phase 4 dispatches
+;; the after-string render on `(pending-indicator p)' so `:percent'
+;; shows a determinate bar plus a percentage and `:eta' shows a
 ;; piecewise-asymptotic bar plus a remaining-seconds estimate.
 ;; Phase 5 makes inserted placeholder text read-only via text
 ;; properties (`front-sticky' on `read-only' so insertions just
@@ -71,11 +73,19 @@
 ;; is still active rejects with \"process exited without resolving\"
 ;; and any failure event rejects with the trimmed event string,
 ;; while any pre-existing sentinel runs first so caller-installed
-;; behaviour is preserved.  The interactive lister is still to come.
+;; behaviour is preserved.  Phase 8 adds the interactive UI:
+;; `pending-cancel-at-point' for cancelling the placeholder at
+;; point, an overlay `keymap' so RET and mouse-1 invoke that
+;; command, `pending-list' (a `tabulated-list-mode' buffer with
+;; columns ID/Buffer/Label/Status/Elapsed/ETA/Group and bindings g
+;; refresh / RET jump / c cancel / q quit), and the optional
+;; `global-pending-lighter-mode' minor mode that adds a count plus
+;; nearest-ETA construct to `global-mode-string'.
 
 ;;; Code:
 
 (require 'cl-lib)
+(require 'tabulated-list)
 
 ;; Register with customize so `:package-version' on individual options
 ;; resolves to a real Emacs version in M-x customize-changed.
@@ -748,6 +758,18 @@ again at the next available tick."
           #'pending--on-window-buffer-change)
 
 
+;;; Overlay keymap
+
+(defvar pending-overlay-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "RET") #'pending-cancel-at-point)
+    (define-key m [mouse-1] #'pending-cancel-at-point)
+    m)
+  "Keymap installed on the placeholder overlay.
+Bound to `RET' and `mouse-1' for `pending-cancel-at-point' so the user
+can cancel an in-flight placeholder by activating it directly.")
+
+
 ;;; Public API: construction
 
 ;;;###autoload
@@ -908,6 +930,10 @@ position falls outside BUFFER's bounds."
                      (format "Pending: %s [%s]"
                              (pending-label p)
                              (pending-status p))))
+      ;; Bind RET / mouse-1 over the placeholder so the user can cancel
+      ;; an in-flight placeholder interactively without typing the
+      ;; command's name.  See `pending-overlay-map'.
+      (overlay-put ov 'keymap pending-overlay-map)
       (pending--register p)
       ;; Wake the global animation timer; safe no-op if it is already
       ;; running.  See `pending--ensure-timer' and DESIGN.md §4 for the
@@ -1335,6 +1361,207 @@ included.  Order within the result is unspecified."
          (push p acc)))
      pending--registry)
     (nreverse acc)))
+
+
+;;; Public API: interactive cancel-at-point
+
+;;;###autoload
+(defun pending-cancel-at-point ()
+  "Cancel the pending placeholder at point, if any.
+Interactive equivalent of `pending-cancel' on `pending-at'.
+
+If no pending overlay covers point, signal a `user-error'.  Reason
+slot is set to `:cancelled-by-user'.  This command is bound under
+`pending-overlay-map' to `RET' and `mouse-1' so users can activate a
+placeholder directly to cancel it."
+  (interactive)
+  (let ((p (pending-at)))
+    (if p
+        (pending-cancel p :cancelled-by-user)
+      (user-error "No pending placeholder at point"))))
+
+
+;;; Public API: tabulated-list UI
+
+(defvar pending-list-mode-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "g") #'pending-list-refresh)
+    (define-key m (kbd "RET") #'pending-list-jump)
+    (define-key m (kbd "c") #'pending-list-cancel)
+    (define-key m (kbd "q") #'quit-window)
+    m)
+  "Keymap for `pending-list-mode' buffers.
+Inherits from `tabulated-list-mode-map' since `pending-list-mode' is
+derived from `tabulated-list-mode'.")
+
+(define-derived-mode pending-list-mode tabulated-list-mode "Pending-List"
+  "Major mode for the *Pending* list buffer.
+Each row corresponds to one entry in `pending--registry'.  The row's
+tabulated-list id is the `pending' struct itself, so commands such as
+`pending-list-cancel' and `pending-list-jump' operate on the struct
+directly via `tabulated-list-get-id'.
+
+\\{pending-list-mode-map}"
+  (setq tabulated-list-format
+        [("ID" 16 t)
+         ("Buffer" 24 t)
+         ("Label" 30 t)
+         ("Status" 12 t)
+         ("Elapsed" 8
+          (lambda (a b)
+            (< (string-to-number (aref (cadr a) 4))
+               (string-to-number (aref (cadr b) 4)))))
+         ("ETA" 8 t)
+         ("Group" 10 t)])
+  (setq tabulated-list-padding 1)
+  (setq tabulated-list-sort-key '("ID" . nil))
+  (tabulated-list-init-header))
+
+(defun pending--list-populate ()
+  "Populate `tabulated-list-entries' from `pending--registry'.
+Each entry's id slot is the `pending' struct so the row commands can
+operate on it directly via `tabulated-list-get-id'.  The label cell is
+truncated to fit the column width using `truncate-string-to-width' so
+long labels do not break the layout."
+  (let (entries)
+    (maphash
+     (lambda (_id p)
+       (let* ((buf-name (if (buffer-live-p (pending-buffer p))
+                            (buffer-name (pending-buffer p))
+                          "<dead>"))
+              (label (or (pending-label p) ""))
+              (status (symbol-name (pending-status p)))
+              (elapsed (if (pending-start-time p)
+                           (format "%.1f"
+                                   (- (float-time)
+                                      (pending-start-time p)))
+                         "0.0"))
+              (eta (if (pending-eta p)
+                       (format "%.1fs" (pending-eta p))
+                     "-"))
+              (group (if (pending-group p)
+                         (symbol-name (pending-group p))
+                       "-")))
+         (push
+          (list p
+                (vector (symbol-name (pending-id p))
+                        buf-name
+                        (truncate-string-to-width label 29 0 nil "…")
+                        status
+                        elapsed
+                        eta
+                        group))
+          entries)))
+     pending--registry)
+    (setq tabulated-list-entries (nreverse entries))))
+
+(defun pending-list-refresh ()
+  "Refresh the *Pending* list buffer from the live registry.
+No-op outside `pending-list-mode'."
+  (interactive)
+  (when (derived-mode-p 'pending-list-mode)
+    (pending--list-populate)
+    (tabulated-list-print t)))
+
+(defun pending-list-jump ()
+  "Jump to the placeholder at the current row of the *Pending* list.
+Pops to the placeholder's buffer and moves point to its start marker
+when the buffer is still live and the marker is still pointing
+somewhere.  No-op when called outside `pending-list-mode' or when the
+row's struct has no live buffer."
+  (interactive)
+  (when (derived-mode-p 'pending-list-mode)
+    (let ((p (tabulated-list-get-id)))
+      (when (and p (buffer-live-p (pending-buffer p)))
+        (pop-to-buffer (pending-buffer p))
+        (when (and (markerp (pending-start p))
+                   (marker-position (pending-start p)))
+          (goto-char (pending-start p)))))))
+
+(defun pending-list-cancel ()
+  "Cancel the placeholder at the current row of the *Pending* list.
+Reason is `:cancelled-from-list'.  After cancelling, refresh the list
+so the cancelled row drops out of the registry view.  No-op when
+called outside `pending-list-mode'."
+  (interactive)
+  (when (derived-mode-p 'pending-list-mode)
+    (let ((p (tabulated-list-get-id)))
+      (when p
+        (pending-cancel p :cancelled-from-list)
+        (pending-list-refresh)))))
+
+;;;###autoload
+(defun pending-list ()
+  "Display all active pending placeholders in a tabulated-list buffer.
+Columns: ID, Buffer, Label, Status, Elapsed, ETA, Group.  Rows are
+sorted by ID by default; clicking a column header sorts by that
+column.  Bindings: `g' refresh, `RET' jump to placeholder, `c' cancel,
+`q' quit."
+  (interactive)
+  (let ((buf (get-buffer-create "*Pending*")))
+    (with-current-buffer buf
+      (pending-list-mode)
+      (pending--list-populate)
+      (tabulated-list-print t))
+    (pop-to-buffer buf)))
+
+
+;;; Mode-line lighter
+
+(defun pending-mode-line-string ()
+  "Return a propertized mode-line string summarising active pendings.
+Format: `\" [3⏳~5s]\"' — count of active placeholders followed by the
+smallest positive remaining ETA across them, in seconds.  When no
+placeholder has an ETA in the future, the trailing tilde-segment is
+omitted.  Returns nil when there are no active placeholders so the
+mode-line construct disappears entirely.
+
+The returned string is propertized with `pending-spinner-face' and
+carries a `help-echo' tooltip describing the count."
+  (let* ((actives (pending-list-active))
+         (count (length actives)))
+    (when (> count 0)
+      (let* ((next-eta
+              (cl-some
+               (lambda (p)
+                 (when-let* ((eta (pending-eta p))
+                             (st  (pending-start-time p)))
+                   (let ((rem (- eta (- (float-time) st))))
+                     (when (> rem 0) rem))))
+               actives))
+             (eta-text (if next-eta
+                           (format "~%ds" (max 1 (round next-eta)))
+                         ""))
+             (text (format " [%d⏳%s]" count eta-text)))
+        (propertize text
+                    'face 'pending-spinner-face
+                    'help-echo
+                    (format "%d active pending placeholder%s"
+                            count (if (= count 1) "" "s")))))))
+
+(defvar pending--mode-line-construct '(:eval (pending-mode-line-string))
+  "Mode-line construct used by `global-pending-lighter-mode'.
+Stored as a single shared `defvar' so the minor mode can add it to
+and remove it from `global-mode-string' by `eq'-identity rather than
+relying on structural equality of freshly-consed lists.")
+
+;;;###autoload
+(define-minor-mode global-pending-lighter-mode
+  "Toggle a global mode-line lighter summarising active pendings.
+When enabled, append `pending--mode-line-construct' (an `:eval' form
+that calls `pending-mode-line-string') to `global-mode-string', so the
+lighter automatically updates each redisplay.  When disabled, remove
+that construct via `delq' on its identity."
+  :global t
+  :group 'pending
+  :lighter nil
+  (if global-pending-lighter-mode
+      (unless (memq pending--mode-line-construct global-mode-string)
+        (setq global-mode-string
+              (append global-mode-string
+                      (list pending--mode-line-construct))))
+    (setq global-mode-string
+          (delq pending--mode-line-construct global-mode-string))))
 
 
 ;;; Unload cleanup

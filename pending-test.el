@@ -38,7 +38,14 @@
 ;; processes), and that a signalling pre-existing sentinel does
 ;; not block the wrapper's lifecycle handling; plus a defence-in-
 ;; depth check that `pending-finish-stream' on a killed buffer is
-;; safe (the kill-buffer-hook normally cancels first).
+;; safe (the kill-buffer-hook normally cancels first); Phase 8
+;; covers the interactive UI — `pending-cancel-at-point' both for
+;; the success path and the no-pending `user-error' branch,
+;; `pending-list' populating a `tabulated-list-mode' buffer with
+;; rows for each registered placeholder, `pending-list-cancel'
+;; cancelling the row's struct, and `pending-mode-line-string'
+;; together with `global-pending-lighter-mode' producing the right
+;; lighter format and toggling cleanly on/off.
 
 ;;; Code:
 
@@ -1031,6 +1038,101 @@ normal use."
      (should callback-ran)
      ;; Calling finish-stream now is a no-op (placeholder is terminal).
      (pending-finish-stream p))))
+
+
+
+;;; Phase 8 — interactive UI
+
+(ert-deftest pending-test/cancel-at-point-cancels ()
+  "`pending-cancel-at-point' cancels the pending at point.
+Point is positioned inside the placeholder overlay so `pending-at'
+returns the struct; the command then routes through `pending-cancel'
+with reason `:cancelled-by-user'.  The label is more than one
+character long so the position one past the overlay start lands
+strictly inside the overlay range."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-cap*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "MIDDLE")))
+         (goto-char (1+ (overlay-start (pending-overlay p))))
+         (pending-cancel-at-point)
+         (should (eq (pending-status p) :cancelled)))))))
+
+(ert-deftest pending-test/cancel-at-point-no-pending ()
+  "`pending-cancel-at-point' signals `user-error' when no pending at point.
+The buffer holds plain text only, so `pending-at' returns nil and the
+command takes the error branch."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-no-cap*")
+     (with-current-buffer buf
+       (insert "no placeholder here")
+       (goto-char (point-min))
+       (should-error (pending-cancel-at-point) :type 'user-error)))))
+
+(ert-deftest pending-test/list-populates ()
+  "`pending-list' creates the *Pending* buffer with one row per placeholder.
+The mode is `pending-list-mode' and `tabulated-list-entries' has at
+least the two rows we made before opening the list."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-list*")
+     (with-current-buffer buf
+       (pending-make buf :label "A" :group 'g1)
+       (pending-make buf :label "B" :group 'g2))
+     (unwind-protect
+         (progn
+           (pending-list)
+           (with-current-buffer "*Pending*"
+             (should (eq major-mode 'pending-list-mode))
+             (should (>= (length tabulated-list-entries) 2))))
+       (when (get-buffer "*Pending*")
+         (kill-buffer "*Pending*"))))))
+
+(ert-deftest pending-test/list-cancel-row ()
+  "`pending-list-cancel' on a row cancels the placeholder.
+Walks the buffer rows to find the one whose `tabulated-list-get-id'
+returns the target struct, then invokes the cancel command."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-list-cancel*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "TARGET")))
+         (unwind-protect
+             (progn
+               (pending-list)
+               (with-current-buffer "*Pending*"
+                 ;; Find the row for our target.
+                 (goto-char (point-min))
+                 (let (found)
+                   (while (and (not found) (not (eobp)))
+                     (when (eq (tabulated-list-get-id) p)
+                       (setq found t))
+                     (unless found (forward-line 1)))
+                   (should found)
+                   (pending-list-cancel)))
+               (should (eq (pending-status p) :cancelled)))
+           (when (get-buffer "*Pending*")
+             (kill-buffer "*Pending*"))))))))
+
+(ert-deftest pending-test/mode-line-string-format ()
+  "`pending-mode-line-string' returns nil when idle, else a count string.
+With one active placeholder, the string contains the count digit `1'."
+  (pending-test--with-fresh-registry
+   (should (null (pending-mode-line-string)))
+   (pending-test--with-buffer (buf "*p-mlstr*")
+     (with-current-buffer buf
+       (pending-make buf :label "X")
+       (let ((s (pending-mode-line-string)))
+         (should (stringp s))
+         (should (string-match-p "1" s)))))))
+
+(ert-deftest pending-test/lighter-mode-toggles ()
+  "`global-pending-lighter-mode' adds and removes the mode-line construct.
+Toggling on adds the shared sentinel by `memq'; toggling off removes
+it via `delq' so a subsequent `memq' returns nil."
+  (let ((global-mode-string nil))
+    (global-pending-lighter-mode 1)
+    (should (memq pending--mode-line-construct global-mode-string))
+    (global-pending-lighter-mode -1)
+    (should-not (memq pending--mode-line-construct global-mode-string))))
 
 
 (provide 'pending-test)
