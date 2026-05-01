@@ -39,6 +39,7 @@ license text.
 * Rich API::                    The full keyword API.
 * Indicator modes::             Spinner, percent, ETA, lighter.
 * Integrations::                Recipes for common async backends.
+* Promise adapter::             Optional ‘aio’-promise add-on.
 * Interactive UI::              The list buffer and cancel-at-point.
 * Mode-line lighter::           The clickable indicator.
 * Customization::               Variables and faces.
@@ -673,7 +674,7 @@ hook.  TTYs and SVG-less Emacs builds fall back automatically to the
 Unicode text glyph.
 
 
-File: pending.info,  Node: Integrations,  Next: Interactive UI,  Prev: Indicator modes,  Up: Top
+File: pending.info,  Node: Integrations,  Next: Promise adapter,  Prev: Indicator modes,  Up: Top
 
 8 Integrations
 **************
@@ -790,13 +791,51 @@ A useful template for tests and demos:
          p))
 
 
-File: pending.info,  Node: Interactive UI,  Next: Mode-line lighter,  Prev: Integrations,  Up: Top
+File: pending.info,  Node: Promise adapter,  Next: Interactive UI,  Prev: Integrations,  Up: Top
 
-9 Interactive UI
-****************
+9 Promise adapter
+*****************
 
-9.1 The ‘*Pending*’ buffer
-==========================
+‘pending-aio.el’ is an optional add-on that turns a ‘pending’ token into
+an ‘aio-promise’, so coroutine- based callers using the ‘aio’ library
+can ‘aio-await’ a placeholder's resolution.  It is gated behind an
+explicit ‘(require 'pending-aio)’ and depends on ‘aio’ -- the main
+‘pending’ package does not pull ‘aio’ in.
+
+ -- Function: pending-as-promise token
+
+     Return an ‘aio-promise’ that resolves when ‘TOKEN’ reaches a
+     terminal state (‘:resolved’, ‘:rejected’, ‘:cancelled’, or
+     ‘:expired’).  The promise resolves with ‘TOKEN’ itself, so the
+     caller can read ‘(pending-status TOKEN)’, ‘(pending-reason TOKEN)’,
+     or ‘(pending-resolved-at TOKEN)’ on the awaited value to discover
+     how the placeholder ended.
+
+     If ‘TOKEN’ is already terminal at call time, the returned promise
+     resolves immediately with ‘TOKEN’.
+
+     The adapter chains itself onto ‘TOKEN’'s ‘on-resolve’ slot.  Any
+     pre-existing ‘on-resolve’ callback is invoked first (with errors
+     caught and reported as a ‘pending’ warning) so installing the
+     adapter does not silently displace caller-supplied handlers.
+
+          (require 'pending-aio)
+
+          (aio-defun my-async-fn ()
+            (let* ((token (pending-make (current-buffer) :label "Working"))
+                   (resolved (aio-await (pending-as-promise token))))
+              (message "Token %s ended with status %s"
+                       (pending-id resolved)
+                       (pending-status resolved))))
+
+
+File: pending.info,  Node: Interactive UI,  Next: Mode-line lighter,  Prev: Promise adapter,  Up: Top
+
+10 Interactive UI
+*****************
+
+10.1 The ‘*Pending*’ buffer
+===========================
 
 ‘M-x pending-list’ opens a tabulated-list view with one row per
 registered placeholder.
@@ -828,8 +867,8 @@ Group       10        The placeholder's group symbol, or ‘-’.
 ‘pending-list-auto-refresh’); pressing ‘g’ is still available for
 explicit refresh.
 
-9.2 Describing a single placeholder
-===================================
+10.2 Describing a single placeholder
+====================================
 
  -- Command: pending-describe token
      Pop up a ‘*Pending: ID*’ buffer in ‘pending-description-mode’
@@ -852,8 +891,8 @@ explicit refresh.
 ‘q’
      Bury the buffer.
 
-9.3 Cancel from point
-=====================
+10.3 Cancel from point
+======================
 
 ‘M-x pending-cancel-at-point’ cancels the placeholder under point.  The
 library installs an overlay keymap on every placeholder binding ‘RET’
@@ -863,8 +902,8 @@ and ‘mouse-1’ to the same command:
      Keymap installed on placeholder overlays.  Bound to ‘RET’ and
      ‘mouse-1’ for ‘pending-cancel-at-point’.
 
-9.4 The demo
-============
+10.4 The demo
+=============
 
  -- Command: pending-demo
      Open ‘*pending-demo*’ with three concurrent placeholders
@@ -875,7 +914,7 @@ and ‘mouse-1’ to the same command:
 
 File: pending.info,  Node: Mode-line lighter,  Next: Customization,  Prev: Interactive UI,  Up: Top
 
-10 Mode-line lighter
+11 Mode-line lighter
 ********************
 
  -- Command: global-pending-lighter-mode
@@ -900,10 +939,10 @@ File: pending.info,  Node: Mode-line lighter,  Next: Customization,  Prev: Inter
 
 File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mode-line lighter,  Up: Top
 
-11 Customization
+12 Customization
 ****************
 
-11.1 User options
+12.1 User options
 =================
 
  -- User Option: pending-fps
@@ -993,7 +1032,7 @@ File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mod
      because ‘pending--swap-region’ deletes the protected text before
      re-inserting plain replacement text.
 
-11.2 Faces
+12.2 Faces
 ==========
 
 The library never adds a ‘face’ text property to text it inserts itself.
@@ -1041,13 +1080,13 @@ placeholder library.
 
 File: pending.info,  Node: Hooks and callbacks,  Next: Comparison,  Prev: Customization,  Up: Top
 
-12 Hooks and lifecycle callbacks
+13 Hooks and lifecycle callbacks
 ********************************
 
-12.1 Per-placeholder callbacks
+13.1 Per-placeholder callbacks
 ==============================
 
-12.1.1 ‘:on-cancel’
+13.1.1 ‘:on-cancel’
 -------------------
 
 Called _before_ the cancellation pipeline runs.  Abort underlying work
@@ -1061,7 +1100,7 @@ here -- kill processes, abort gptel requests, cancel timers.
    If ‘:on-cancel’ signals an error or ‘quit’, the cancel pipeline
 catches it and proceeds; the placeholder cannot get stranded.
 
-12.1.2 ‘:on-resolve’
+13.1.2 ‘:on-resolve’
 --------------------
 
 Called _once_ on transition to any terminal state (‘:resolved’,
@@ -1075,7 +1114,7 @@ inside the callback to differentiate.
                                           (pending-label p)
                                           (pending-status p))))
 
-12.2 Global hooks installed by the library
+13.2 Global hooks installed by the library
 ==========================================
 
 ‘kill-buffer-hook’
@@ -1093,7 +1132,7 @@ inside the callback to differentiate.
    ‘pending-unload-function’ cleans up the timer and removes the global
 hooks on ‘unload-feature’.
 
-12.3 Errors
+13.3 Errors
 ===========
 
  -- Error: pending-error
@@ -1104,7 +1143,7 @@ hooks on ‘unload-feature’.
 
 File: pending.info,  Node: Comparison,  Next: Caveats,  Prev: Hooks and callbacks,  Up: Top
 
-13 Comparison with ‘org-pending’
+14 Comparison with ‘org-pending’
 ********************************
 
 Bruno Barbier's ‘org-pending’ is a closely related upstream Org patch
@@ -1149,7 +1188,7 @@ want streaming and progress visualization out of the box, prefer
 
 File: pending.info,  Node: Caveats,  Next: Roadmap,  Prev: Comparison,  Up: Top
 
-14 Limitations and caveats
+15 Limitations and caveats
 **************************
 
    • *~50 placeholders per buffer guideline.*  Each placeholder is an
@@ -1180,7 +1219,7 @@ File: pending.info,  Node: Caveats,  Next: Roadmap,  Prev: Comparison,  Up: Top
 
 File: pending.info,  Node: Roadmap,  Next: Development,  Prev: Caveats,  Up: Top
 
-15 Roadmap
+16 Roadmap
 **********
 
 Items deferred past the v0.1.0 tag:
@@ -1198,10 +1237,10 @@ Items deferred past the v0.1.0 tag:
 
 File: pending.info,  Node: Development,  Next: License,  Prev: Roadmap,  Up: Top
 
-16 Development
+17 Development
 **************
 
-16.1 Building
+17.1 Building
 =============
 
 This package uses Eask (https://github.com/emacs-eask/cli) for build
@@ -1222,7 +1261,7 @@ automation, with a Makefile wrapper.
      make docs       # build doc/pending.info
      make clean
 
-16.2 Generating the manual
+17.2 Generating the manual
 ==========================
 
 The Texinfo source lives at ‘doc/pending.texi’; the built ‘pending.info’
@@ -1232,7 +1271,7 @@ ships in the package.
      make html       # build doc/pending.html (preview)
      make clean-docs
 
-16.3 Interactive development
+17.3 Interactive development
 ============================
 
      ;; Reload the library after editing
@@ -1245,7 +1284,7 @@ ships in the package.
      ;; Open the demo
      M-x pending-demo
 
-16.4 Contributing
+17.4 Contributing
 =================
 
 Bug reports and pull requests are welcome via GitHub.  When filing an
@@ -1277,6 +1316,7 @@ Index
  [index ]
 * Menu:
 
+* aio:                                   Promise adapter.     (line   6)
 * auto-cancellation:                     Concepts.            (line 131)
 * buffer-killed:                         Concepts.            (line 131)
 * callbacks:                             Hooks and callbacks. (line   5)
@@ -1321,6 +1361,8 @@ Index
 * pending-alist <1>:                     Simple API.          (line  86)
 * pending-alist <2>:                     Simple API.          (line  87)
 * pending-allow-read-only:               Customization.       (line  42)
+* pending-as-promise:                    Promise adapter.     (line  12)
+* pending-as-promise <1>:                Promise adapter.     (line  13)
 * pending-at:                            Rich API.            (line 180)
 * pending-at <1>:                        Rich API.            (line 181)
 * pending-attach-process:                Rich API.            (line 136)
@@ -1399,6 +1441,7 @@ Index
 * piecewise asymptote:                   Indicator modes.     (line  24)
 * positional API:                        Simple API.          (line   6)
 * progress bar:                          Indicator modes.     (line   6)
+* promise:                               Promise adapter.     (line   6)
 * quick start:                           Quick start.         (line   6)
 * read-only:                             Concepts.            (line 101)
 * recipes:                               Integrations.        (line   6)
@@ -1422,24 +1465,25 @@ Index
 
 Tag Table:
 Node: Top517
-Node: Introduction1942
-Node: Installation3855
-Node: Quick start4767
-Node: Concepts6068
-Node: Simple API12055
-Node: Rich API16642
-Node: Indicator modes25002
-Node: Integrations27247
-Node: Interactive UI31725
-Node: Mode-line lighter34605
-Node: Customization35602
-Node: Hooks and callbacks42190
-Node: Comparison44328
-Node: Caveats46665
-Node: Roadmap48011
-Node: Development48656
-Node: License50329
-Node: Index50649
+Node: Introduction2009
+Node: Installation3922
+Node: Quick start4834
+Node: Concepts6135
+Node: Simple API12122
+Node: Rich API16709
+Node: Indicator modes25069
+Node: Integrations27314
+Node: Promise adapter31793
+Node: Interactive UI33520
+Node: Mode-line lighter36413
+Node: Customization37410
+Node: Hooks and callbacks43998
+Node: Comparison46136
+Node: Caveats48473
+Node: Roadmap49819
+Node: Development50464
+Node: License52137
+Node: Index52457
 
 End Tag Table
 

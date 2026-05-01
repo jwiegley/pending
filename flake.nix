@@ -13,10 +13,13 @@
 
         # Emacs with package-lint preloaded so `make lint` works inside
         # the dev shell without needing `eask install-deps` first.
+        # `aio' is included so the optional `pending-aio.el' add-on can
+        # byte-compile and its tests can run.
         emacsWithDeps = (pkgs.emacsPackagesFor pkgs.emacs-nox).emacsWithPackages
           (epkgs: with epkgs; [
             package-lint
             undercover
+            aio
           ]);
 
         src = pkgs.lib.cleanSource ./.;
@@ -80,13 +83,14 @@
             rm -f *.elc
             emacs --batch -L . \
               --eval "(setq byte-compile-error-on-warn t)" \
-              -f batch-byte-compile pending.el pending-test.el
+              -f batch-byte-compile \
+              pending.el pending-aio.el pending-test.el pending-aio-test.el
           '';
 
-          # Run the 77 ERT tests.
+          # Run the ERT tests.
           tests = runCheck "tests" ''
             emacs --batch -L . \
-              -l pending.el -l pending-test.el \
+              -l pending.el -l pending-test.el -l pending-aio-test.el \
               -f ert-run-tests-batch-and-exit
           '';
 
@@ -100,14 +104,16 @@
               --eval "(require 'package-lint)" \
               --eval "(setq package-lint-main-file \"pending.el\")" \
               -f package-lint-batch-and-exit \
-              pending.el
+              pending.el pending-aio.el
             emacs --batch -L . \
               --eval "(require 'checkdoc)" \
-              --eval "(checkdoc-file \"pending.el\")"
+              --eval "(checkdoc-file \"pending.el\")" \
+              --eval "(checkdoc-file \"pending-aio.el\")"
             rm -f *.elc
             emacs --batch -L . \
               --eval "(setq byte-compile-error-on-warn t)" \
-              -f batch-byte-compile pending.el pending-test.el
+              -f batch-byte-compile \
+              pending.el pending-aio.el pending-test.el pending-aio-test.el
           '';
 
           # Reproducible indent-region check.

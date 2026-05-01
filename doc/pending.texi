@@ -52,6 +52,7 @@ full license text.
 * Rich API::                    The full keyword API.
 * Indicator modes::             Spinner, percent, ETA, lighter.
 * Integrations::                Recipes for common async backends.
+* Promise adapter::             Optional @code{aio}-promise add-on.
 * Interactive UI::              The list buffer and cancel-at-point.
 * Mode-line lighter::           The clickable indicator.
 * Customization::               Variables and faces.
@@ -943,6 +944,51 @@ CALLBACK is called with the token; it must arrange to call
     (funcall callback p)
     p))
 @end example
+
+
+@node Promise adapter
+@chapter Promise adapter
+@cindex aio
+@cindex promise
+
+@code{pending-aio.el} is an optional add-on that turns a
+@code{pending} token into an @code{aio-promise}, so coroutine-
+based callers using the @code{aio} library can @code{aio-await} a
+placeholder's resolution.  It is gated behind an explicit
+@code{(require 'pending-aio)} and depends on @code{aio} --- the
+main @code{pending} package does not pull @code{aio} in.
+
+@deffn Function pending-as-promise token
+@findex pending-as-promise
+
+Return an @code{aio-promise} that resolves when @code{TOKEN}
+reaches a terminal state (@code{:resolved}, @code{:rejected},
+@code{:cancelled}, or @code{:expired}).  The promise resolves
+with @code{TOKEN} itself, so the caller can read
+@code{(pending-status TOKEN)}, @code{(pending-reason TOKEN)},
+or @code{(pending-resolved-at TOKEN)} on the awaited value to
+discover how the placeholder ended.
+
+If @code{TOKEN} is already terminal at call time, the returned
+promise resolves immediately with @code{TOKEN}.
+
+The adapter chains itself onto @code{TOKEN}'s @code{on-resolve}
+slot.  Any pre-existing @code{on-resolve} callback is invoked
+first (with errors caught and reported as a @code{pending}
+warning) so installing the adapter does not silently displace
+caller-supplied handlers.
+
+@example
+(require 'pending-aio)
+
+(aio-defun my-async-fn ()
+  (let* ((token (pending-make (current-buffer) :label "Working"))
+         (resolved (aio-await (pending-as-promise token))))
+    (message "Token %s ended with status %s"
+             (pending-id resolved)
+             (pending-status resolved))))
+@end example
+@end deffn
 
 
 @node Interactive UI

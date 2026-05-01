@@ -29,7 +29,7 @@ jobs:
       - name: byte-compile
         run: eask compile
       - name: tests
-        run: eask test ert pending-test.el
+        run: eask test ert pending-test.el pending-aio-test.el
       - name: lint
         run: make lint EMACS=emacs
       - name: format-check

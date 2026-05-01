@@ -7,7 +7,7 @@ pre-commit:
 
     tests:
       glob: "*.el"
-      run: load-env-emacs30MacPort eask test ert pending-test.el
+      run: load-env-emacs30MacPort eask test ert pending-test.el pending-aio-test.el
 
     lint:
       glob: "*.el"
@@ -23,7 +23,11 @@ pre-commit:
         load-env-emacs30MacPort emacs --batch \
           --eval '(progn (find-file "pending.el") (checkdoc-current-buffer t) (princ "DONE"))'
         load-env-emacs30MacPort emacs --batch \
+          --eval '(progn (find-file "pending-aio.el") (checkdoc-current-buffer t) (princ "DONE"))'
+        load-env-emacs30MacPort emacs --batch \
           --eval '(progn (find-file "pending-test.el") (checkdoc-current-buffer t) (princ "DONE"))'
+        load-env-emacs30MacPort emacs --batch \
+          --eval '(progn (find-file "pending-aio-test.el") (checkdoc-current-buffer t) (princ "DONE"))'
 
     docs-build:
       glob: "doc/*.texi"

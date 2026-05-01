@@ -15,7 +15,7 @@ compile:
 	@eask compile
 
 test:
-	@eask test ert pending-test.el
+	@eask test ert pending-test.el pending-aio-test.el
 
 docs: info
 
@@ -54,7 +54,7 @@ lint:
 	@eask lint package
 	@eask lint checkdoc
 	$(EMACS_BATCH) --eval "(setq byte-compile-error-on-warn t)" \
-	  -f batch-byte-compile pending.el pending-test.el
+	  -f batch-byte-compile pending.el pending-aio.el pending-test.el pending-aio-test.el
 
 # `coverage` --- run tests under undercover.el and emit lcov.
 coverage:
@@ -67,7 +67,7 @@ profile:
 # `warnings` --- verify clean compile (alias for byte-compile -W=error).
 warnings:
 	$(EMACS_BATCH) --eval "(setq byte-compile-error-on-warn t)" \
-	  -f batch-byte-compile pending.el pending-test.el
+	  -f batch-byte-compile pending.el pending-aio.el pending-test.el pending-aio-test.el
 
 # `all-checks` --- what CI runs.
 all-checks: warnings test lint format-check docs coverage

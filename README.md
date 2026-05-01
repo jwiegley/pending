@@ -749,6 +749,36 @@ Called *once* on transition to any terminal state (`:resolved`,
 `pending-unload-function` cleans up the timer and removes the
 global hooks on `unload-feature`.
 
+## Promise adapter for `aio` users
+
+`pending-aio.el` is an optional add-on that turns a `pending` token
+into an [`aio`][aio] promise, so coroutine-based callers can
+`aio-await` a placeholder's resolution. It is gated behind an
+explicit `(require 'pending-aio)` and depends on `aio` — the main
+`pending` package does not pull `aio` in.
+
+```elisp
+(require 'pending-aio)
+
+(aio-defun my-async-fn ()
+  (let* ((token (pending-make (current-buffer) :label "Working"))
+         (resolved (aio-await (pending-as-promise token))))
+    ;; ...do work that eventually calls
+    ;; (pending-finish token "result")...
+    (message "Token %s ended with status %s"
+             (pending-id resolved)
+             (pending-status resolved))))
+```
+
+`pending-as-promise TOKEN` returns an `aio-promise' that resolves
+with `TOKEN' itself once the placeholder reaches any terminal
+state (`:resolved`, `:rejected`, `:cancelled`, `:expired`). If
+`TOKEN' is already terminal at call time, the returned promise is
+pre-resolved. The adapter chains itself onto the token's
+`:on-resolve' slot, so any pre-existing handler still fires.
+
+[aio]: https://github.com/skeeto/emacs-aio
+
 ## Comparison with `org-pending`
 
 Bruno Barbier's [`org-pending`][1] is a closely related upstream
@@ -785,10 +815,11 @@ out of the box, prefer this one.
   assume a monospaced cell width. Under variable-pitch buffer
   faces, the bar may look ragged. Set `pending-bar-family` to a
   fixed-pitch family to compensate.
-- **Single-buffer scope.** A placeholder's overlay and read-only
-  text properties live in one buffer. There's no projection across
-  indirect buffers in v0.1; `org-pending`-style indirect-buffer
-  projection is on the roadmap.
+- **Overlay scope.** A placeholder's overlay lives in one buffer.
+  v0.2 projects the read-only text properties into indirect
+  buffers (gated on `pending-protect-adopted-region`), but the
+  visible overlay decoration (spinner, lighter, progress bar) only
+  appears in the host buffer.
 - **No cross-buffer multi-region pending.** A single pending
   struct represents one contiguous region in one buffer.
   Coordinate multiple related placeholders via the `:group`
@@ -806,10 +837,12 @@ Landed in v0.2:
   placeholder (`pending-describe`).
 - Indirect-buffer projection of read-only properties (gated on
   `pending-protect-adopted-region`).
+- `pending-as-promise` adapter for `aio` users (optional add-on
+  in `pending-aio.el`).
 
 Still on the roadmap:
 
-- `pending-as-promise` adapter for `aio` users.
+- Group operations (`pending-cancel-group`).
 
 ## Development
 

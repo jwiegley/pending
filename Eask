@@ -12,12 +12,14 @@
 (package-file "pending.el")
 
 (files "pending.el"
+       "pending-aio.el"
        "doc/pending.info"
        "doc/pending.texi"
        "README.md"
        "LICENSE.md")
 
-(script "test" "eask test ert pending-test.el")
+(script "test" "eask test ert pending-test.el pending-aio-test.el")
+(script "test-aio" "eask test ert pending-aio-test.el")
 
 (source "gnu")
 (source "melpa")
@@ -26,4 +28,5 @@
 
 (development
  (depends-on "package-lint")
- (depends-on "undercover"))
+ (depends-on "undercover")
+ (depends-on "aio"))
