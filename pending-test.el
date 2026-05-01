@@ -1375,6 +1375,65 @@ but the underlying buffer text does NOT carry a face text property."
             (should-not (get-text-property pos 'face))))))))
 
 
+;;; v0.2 — auto-refresh of *Pending* list
+
+(ert-deftest pending-test/list-auto-refreshes-on-register ()
+  "Creating a placeholder while *Pending* is open updates the list.
+With `pending-list-auto-refresh' on (the default), `pending-make'
+firing through `pending--register' triggers a re-populate of the
+live `*Pending*' buffer so newly registered placeholders appear
+without the user pressing `g'."
+  (pending-test--with-fresh-registry
+    (unwind-protect
+        (progn
+          (pending-list)
+          (pending-test--with-buffer (buf "*p-auto-1*")
+            (with-current-buffer buf
+              (pending-make buf :label "A")
+              (insert " ")
+              (pending-make buf :label "B"))
+            (with-current-buffer "*Pending*"
+              (should (= 2 (length tabulated-list-entries))))))
+      (when (get-buffer "*Pending*") (kill-buffer "*Pending*")))))
+
+(ert-deftest pending-test/list-auto-refreshes-on-resolve ()
+  "Resolving a placeholder while *Pending* is open updates the list.
+The terminal transition path goes through `pending--resolve-internal'
+which calls `pending--unregister' which now refreshes the live list,
+so a resolved row drops out of the view immediately."
+  (pending-test--with-fresh-registry
+    (unwind-protect
+        (pending-test--with-buffer (buf "*p-auto-2*")
+          (with-current-buffer buf
+            (let ((p1 (pending-make buf :label "A")))
+              (insert " ")
+              (let ((p2 (pending-make buf :label "B")))
+                (pending-list)
+                (with-current-buffer "*Pending*"
+                  (should (= 2 (length tabulated-list-entries))))
+                (pending-finish p1 "done")
+                (with-current-buffer "*Pending*"
+                  (should (= 1 (length tabulated-list-entries))))
+                ;; Cleanup
+                (pending-finish p2 "done")))))
+      (when (get-buffer "*Pending*") (kill-buffer "*Pending*")))))
+
+(ert-deftest pending-test/list-auto-refresh-disabled ()
+  "Setting `pending-list-auto-refresh' nil suppresses auto-refresh.
+Without auto-refresh, the *Pending* buffer is the snapshot taken
+at `pending-list' time and stays stale until a manual `g'."
+  (pending-test--with-fresh-registry
+    (unwind-protect
+        (let ((pending-list-auto-refresh nil))
+          (pending-list)
+          (pending-test--with-buffer (buf "*p-auto-3*")
+            (with-current-buffer buf
+              (pending-make buf :label "A"))
+            (with-current-buffer "*Pending*"
+              (should (= 0 (length tabulated-list-entries))))))
+      (when (get-buffer "*Pending*") (kill-buffer "*Pending*")))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

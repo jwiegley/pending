@@ -81,7 +81,7 @@
 ;; resolves to a real Emacs version in M-x customize-changed.
 (when (boundp 'customize-package-emacs-version-alist)
   (add-to-list 'customize-package-emacs-version-alist
-               '(pending ("0.1.0" . "30.1"))))
+               '(pending ("0.1.0" . "30.1") ("0.2.0" . "30.2"))))
 
 
 ;;; Customization group
@@ -196,6 +196,19 @@ placeholder is still in flight when Emacs is being killed."
   :type 'boolean
   :group 'pending
   :package-version '(pending . "0.1.0"))
+
+(defcustom pending-list-auto-refresh t
+  "If non-nil, automatically refresh `*Pending*' on registry mutation.
+When the global registry changes — via `pending-make' adding a new
+placeholder, a terminal transition removing one through
+`pending--resolve-internal', or any other registry mutator — the
+`*Pending*' list buffer (when live and in `pending-list-mode') is
+re-populated from the live registry so the user-facing view stays
+in sync without pressing `g'.  Set to nil to keep v0.1 semantics
+where the list view is a snapshot until manually refreshed."
+  :type 'boolean
+  :group 'pending
+  :package-version '(pending . "0.2.0"))
 
 
 ;;; Faces
@@ -333,6 +346,33 @@ have to scan the global table.")
 
 ;;; Internal helpers
 
+(defun pending--list-refresh-if-live ()
+  "Refresh the `*Pending*' buffer if it is live and in `pending-list-mode'.
+Used to keep the list view in lockstep with the registry across
+mutating paths — `pending--register', `pending--unregister', and
+`pending--resolve-internal'.  No-op when the buffer is missing,
+dead, in a different mode, or `pending-list-auto-refresh' is nil.
+
+Repopulates `tabulated-list-entries' from the current registry and
+re-prints the table.  Attempts to keep cursor on the same row by
+remembering the result of `line-number-at-pos' before the print and
+restoring it afterwards (best-effort: rows may have been removed)."
+  (when pending-list-auto-refresh
+    (let ((buf (get-buffer "*Pending*")))
+      (when (and buf (buffer-live-p buf))
+        (with-current-buffer buf
+          (when (derived-mode-p 'pending-list-mode)
+            (let ((inhibit-message t)
+                  (point-line (line-number-at-pos)))
+              (pending--list-populate)
+              (tabulated-list-print t)
+              ;; Best-effort cursor restoration: rows may have been
+              ;; added/removed, so this lands the user on the row at
+              ;; the same visual offset.  If that row no longer
+              ;; exists, point lands at end-of-buffer.
+              (goto-char (point-min))
+              (forward-line (1- point-line)))))))))
+
 (defun pending--terminal-status-p (status)
   "Return non-nil if STATUS is a terminal lifecycle keyword.
 The terminal states are `:resolved', `:rejected', `:cancelled', and
@@ -353,7 +393,8 @@ value."
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (push p pending--buffer-registry)
-        (add-hook 'kill-buffer-hook #'pending--on-kill-buffer nil t)))))
+        (add-hook 'kill-buffer-hook #'pending--on-kill-buffer nil t))))
+  (pending--list-refresh-if-live))
 
 (defun pending--unregister (p)
   "Remove P from the global and buffer-local pending registries.
@@ -379,7 +420,8 @@ result of this removal."
   ;; process exits later, the call to `pending-reject' from the
   ;; wrapper is a no-op because the placeholder is already terminal.
   (when (zerop (hash-table-count pending--registry))
-    (pending--park-timer)))
+    (pending--park-timer))
+  (pending--list-refresh-if-live))
 
 (defun pending--swap-region (p new-text)
   "Atomically replace P's region with NEW-TEXT.
