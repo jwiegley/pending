@@ -10,7 +10,7 @@ when ready.
 Calling Claude  ⠋ [████████░░░░░░░░] 47%
 ```
 
-**v0.1.0 — Emacs 27.1+ — GPL-3.0-or-later**
+**v0.1.0 — Emacs 27.1+ — BSD-3-Clause**
 
 ## At a glance
 
@@ -821,7 +821,7 @@ When sending a PR, please:
 
 ## License
 
-GPL-3.0-or-later. Same as Emacs and `org-pending`.
+BSD 3-Clause. See [LICENSE.md](LICENSE.md).
 
 ## Acknowledgments
 

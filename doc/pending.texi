@@ -13,14 +13,9 @@ regions whose content arrives asynchronously.
 
 Copyright @copyright{} 2026 John Wiegley.
 
-@quotation
-Permission is granted to copy, distribute and/or modify this document
-under the terms of the GNU Free Documentation License, Version 1.3 or
-any later version published by the Free Software Foundation; with no
-Invariant Sections, no Front-Cover Texts, and no Back-Cover Texts.
-A copy of the license is included in the section entitled ``GNU Free
-Documentation License''.
-@end quotation
+Permission is granted under the terms of the BSD 3-Clause License;
+see the @file{LICENSE.md} file in the source distribution for the
+full license text.
 @end copying
 
 @dircategory Emacs misc features
@@ -65,7 +60,7 @@ Documentation License''.
 * Caveats::                     Known limitations.
 * Roadmap::                     What's planned for v0.2.
 * Development::                 Building and testing.
-* GNU Free Documentation License:: Manual license.
+* License::                     Manual license.
 * Index::
 @end menu
 
@@ -1403,12 +1398,13 @@ warning-free and @code{eask test} is green, and run @kbd{M-x
 checkdoc} on touched files.
 
 
-@node GNU Free Documentation License
-@appendix GNU Free Documentation License
+@node License
+@appendix License
 
-The GNU Free Documentation License (GFDL) Version 1.3 applies to
-this manual.  See @uref{https://www.gnu.org/licenses/fdl-1.3.html}
-for the full text.
+This manual is distributed under the BSD 3-Clause License, the same
+license as the @file{pending} library itself.  See the
+@file{LICENSE.md} file in the source distribution for the full
+license text.
 
 
 @node Index

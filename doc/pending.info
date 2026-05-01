@@ -6,12 +6,9 @@ regions whose content arrives asynchronously.
 
    Copyright © 2026 John Wiegley.
 
-     Permission is granted to copy, distribute and/or modify this
-     document under the terms of the GNU Free Documentation License,
-     Version 1.3 or any later version published by the Free Software
-     Foundation; with no Invariant Sections, no Front-Cover Texts, and
-     no Back-Cover Texts.  A copy of the license is included in the
-     section entitled "GNU Free Documentation License".
+   Permission is granted under the terms of the BSD 3-Clause License;
+see the ‘LICENSE.md’ file in the source distribution for the full
+license text.
 INFO-DIR-SECTION Emacs misc features
 START-INFO-DIR-ENTRY
 * Pending: (pending). Async content placeholders for Emacs.
@@ -28,12 +25,9 @@ regions whose content arrives asynchronously.
 
    Copyright © 2026 John Wiegley.
 
-     Permission is granted to copy, distribute and/or modify this
-     document under the terms of the GNU Free Documentation License,
-     Version 1.3 or any later version published by the Free Software
-     Foundation; with no Invariant Sections, no Front-Cover Texts, and
-     no Back-Cover Texts.  A copy of the license is included in the
-     section entitled "GNU Free Documentation License".
+   Permission is granted under the terms of the BSD 3-Clause License;
+see the ‘LICENSE.md’ file in the source distribution for the full
+license text.
 
 * Menu:
 
@@ -53,7 +47,7 @@ regions whose content arrives asynchronously.
 * Caveats::                     Known limitations.
 * Roadmap::                     What's planned for v0.2.
 * Development::                 Building and testing.
-* GNU Free Documentation License:: Manual license.
+* License::                     Manual license.
 * Index::
 
 
@@ -1123,7 +1117,7 @@ Items deferred past the v0.1.0 tag:
      fast-forward testing.
 
 
-File: pending.info,  Node: Development,  Next: GNU Free Documentation License,  Prev: Roadmap,  Up: Top
+File: pending.info,  Node: Development,  Next: License,  Prev: Roadmap,  Up: Top
 
 16 Development
 **************
@@ -1186,17 +1180,17 @@ add ERT tests for new behaviour, ensure ‘eask compile’ is warning-free
 and ‘eask test’ is green, and run ‘M-x checkdoc’ on touched files.
 
 
-File: pending.info,  Node: GNU Free Documentation License,  Next: Index,  Prev: Development,  Up: Top
+File: pending.info,  Node: License,  Next: Index,  Prev: Development,  Up: Top
 
-Appendix A GNU Free Documentation License
-*****************************************
+Appendix A License
+******************
 
-The GNU Free Documentation License (GFDL) Version 1.3 applies to this
-manual.  See <https://www.gnu.org/licenses/fdl-1.3.html> for the full
-text.
+This manual is distributed under the BSD 3-Clause License, the same
+license as the ‘pending’ library itself.  See the ‘LICENSE.md’ file in
+the source distribution for the full license text.
 
 
-File: pending.info,  Node: Index,  Prev: GNU Free Documentation License,  Up: Top
+File: pending.info,  Node: Index,  Prev: License,  Up: Top
 
 Index
 *****
@@ -1334,25 +1328,25 @@ Index
 
 
 Tag Table:
-Node: Top762
-Node: Introduction2435
-Node: Installation4348
-Node: Quick start5262
-Node: Concepts6569
-Node: Simple API11945
-Node: Rich API16544
-Node: Indicator modes24909
-Node: Integrations26613
-Node: Interactive UI31097
-Node: Mode-line lighter32895
-Node: Customization33892
-Node: Hooks and callbacks38669
-Node: Comparison40807
-Node: Caveats43145
-Node: Roadmap44491
-Node: Development45136
-Node: GNU Free Documentation License46832
-Node: Index47169
+Node: Top517
+Node: Introduction1942
+Node: Installation3855
+Node: Quick start4769
+Node: Concepts6076
+Node: Simple API11452
+Node: Rich API16051
+Node: Indicator modes24416
+Node: Integrations26120
+Node: Interactive UI30604
+Node: Mode-line lighter32402
+Node: Customization33399
+Node: Hooks and callbacks38176
+Node: Comparison40314
+Node: Caveats42652
+Node: Roadmap43998
+Node: Development44643
+Node: License46316
+Node: Index46636
 
 End Tag Table
 

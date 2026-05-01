@@ -5,7 +5,7 @@
          "Async pending content placeholders")
 
 (author "John Wiegley" "jwiegley@gmail.com")
-(license "GPL-3.0-or-later")
+(license "BSD-3-Clause")
 (website-url "https://github.com/jwiegley/pending")
 (keywords "convenience" "tools")
 
@@ -15,7 +15,7 @@
        "doc/pending.info"
        "doc/pending.texi"
        "README.md"
-       "LICENSE")
+       "LICENSE.md")
 
 (script "test" "eask test ert pending-test.el")
 
