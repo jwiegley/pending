@@ -1,0 +1,1328 @@
+This is pending.info, produced by makeinfo version 7.2 from
+pending.texi.
+
+This manual describes Pending v0.1.0, a library for marking buffer
+regions whose content arrives asynchronously.
+
+   Copyright © 2026 John Wiegley.
+
+     Permission is granted to copy, distribute and/or modify this
+     document under the terms of the GNU Free Documentation License,
+     Version 1.3 or any later version published by the Free Software
+     Foundation; with no Invariant Sections, no Front-Cover Texts, and
+     no Back-Cover Texts.  A copy of the license is included in the
+     section entitled "GNU Free Documentation License".
+INFO-DIR-SECTION Emacs misc features
+START-INFO-DIR-ENTRY
+* Pending: (pending). Async content placeholders for Emacs.
+END-INFO-DIR-ENTRY
+
+
+File: pending.info,  Node: Top,  Next: Introduction,  Up: (dir)
+
+Pending
+*******
+
+This manual describes Pending v0.1.0, a library for marking buffer
+regions whose content arrives asynchronously.
+
+   Copyright © 2026 John Wiegley.
+
+     Permission is granted to copy, distribute and/or modify this
+     document under the terms of the GNU Free Documentation License,
+     Version 1.3 or any later version published by the Free Software
+     Foundation; with no Invariant Sections, no Front-Cover Texts, and
+     no Back-Cover Texts.  A copy of the license is included in the
+     section entitled "GNU Free Documentation License".
+
+* Menu:
+
+* Introduction::                What Pending is and isn't.
+* Installation::                Getting Pending into your Emacs.
+* Quick start::                 Five minutes to your first placeholder.
+* Concepts::                    Tokens, lighters, registry, indicators.
+* Simple API::                  The everyday entry points.
+* Rich API::                    The full keyword API.
+* Indicator modes::             Spinner, percent, ETA, lighter.
+* Integrations::                Recipes for common async backends.
+* Interactive UI::              The list buffer and cancel-at-point.
+* Mode-line lighter::           The clickable indicator.
+* Customization::               Variables and faces.
+* Hooks and callbacks::         Lifecycle wiring.
+* Comparison::                  ‘org-pending’ and prior art.
+* Caveats::                     Known limitations.
+* Roadmap::                     What's planned for v0.2.
+* Development::                 Building and testing.
+* GNU Free Documentation License:: Manual license.
+* Index::
+
+
+File: pending.info,  Node: Introduction,  Next: Installation,  Prev: Top,  Up: Top
+
+1 Introduction
+**************
+
+Pending is a standalone Emacs Lisp library for marking buffer regions
+whose content will arrive asynchronously.  It provides a colored
+placeholder where some asynchronously computed text is going to appear,
+optionally with a spinner or progress bar, and atomically replaces it
+with the result when ready.
+
+     Calling Claude  ⠋ [████████········] 47%
+
+   Common use cases:
+
+   • LLM streaming responses (‘gptel’, ‘agent-shell’, your own
+     Claude/OpenAI client).
+   • Long-running shell commands run via ‘make-process’.
+   • Network fetches via ‘url-retrieve’.
+   • Arbitrary callback-driven asynchronous work.
+
+   The library aims for four properties that make asynchronous insertion
+pleasant for end users:
+
+*Visible async*
+     Users see immediately _where_ the answer will land and _that_
+     something is happening.  No silent wait while staring at a static
+     buffer.
+
+*Atomic resolution*
+     The swap from placeholder to result is exactly one undo step.  No
+     torn intermediate states, no partial-edit history pollution.
+
+*Edit-survival*
+     While pending, the placeholder text is read-only.  Surrounding
+     edits adjust the placeholder's markers automatically; if the user
+     deletes the region outright, the placeholder cancels itself rather
+     than resolving into deleted space.
+
+*Backend-agnostic*
+     The library does not commit to any particular async pattern; it
+     provides a small primitive (token + atomic swap) that integrates
+     with ‘gptel’, ‘make-process’, ‘url-retrieve’, plain timers, or your
+     own callback-driven pattern.
+
+   A single global animation timer drives all in-flight placeholders, so
+spinning N concurrent regions costs only N overlay decorations per tick,
+not N timers.
+
+
+File: pending.info,  Node: Installation,  Next: Quick start,  Prev: Introduction,  Up: Top
+
+2 Installation
+**************
+
+Pending requires Emacs 27.1 or newer and has no third-party runtime
+dependencies.
+
+2.1 Via ‘package-vc-install’
+============================
+
+     (package-vc-install
+      '(pending :url "https://github.com/jwiegley/pending"))
+
+   To install from a local checkout:
+
+     (package-vc-install-from-checkout "/path/to/pending" "pending")
+
+2.2 Via ‘use-package’
+=====================
+
+     (use-package pending
+       :vc (:url "https://github.com/jwiegley/pending")
+       :commands (pending-make pending-overlay pending-insert
+                  pending-resolve pending-cancel pending-list
+                  pending-demo)
+       :config
+       (global-pending-lighter-mode 1))
+
+2.3 Manual
+==========
+
+Drop ‘pending.el’ somewhere on ‘load-path’ and ‘(require 'pending)’.
+
+
+File: pending.info,  Node: Quick start,  Next: Concepts,  Prev: Installation,  Up: Top
+
+3 Quick start
+*************
+
+The simplest path is the positional API: mark a region or point as
+pending, then atomically replace it when the answer arrives.
+
+3.1 Mark a region for rewrite
+=============================
+
+     (let ((tok (pending-overlay (line-beginning-position)
+                                 (line-end-position)
+                                 "rewriting")))
+       ;; ... kick off async work ...
+       (pending-resolve tok "the new text"))
+
+3.2 Mark a single point for insertion
+=====================================
+
+     (let ((tok (pending-insert (point) "Calling Claude")))
+       (run-at-time 2 nil (lambda () (pending-resolve tok "Hello!"))))
+
+3.3 Cancel from point
+=====================
+
+Place the cursor on a placeholder and run ‘M-x pending-cancel-at-point’.
+The placeholder's overlay also binds ‘RET’ and ‘mouse-1’ to the same
+command via ‘pending-overlay-map’, so a single ‘RET’ on the highlighted
+region cancels the in-flight work.
+
+3.4 Show the lighter mode
+=========================
+
+     M-x global-pending-lighter-mode
+
+   The mode-line gains a small ‘[N⏳~Ks]’ summary while any placeholders
+are active.  Clicking the lighter opens ‘pending-list’.
+
+
+File: pending.info,  Node: Concepts,  Next: Simple API,  Prev: Quick start,  Up: Top
+
+4 Concepts
+**********
+
+4.1 Tokens
+==========
+
+Every constructor returns a “token” -- a ‘pending’ struct used as a
+handle for the placeholder.  Pass the token to ‘pending-resolve’,
+‘pending-cancel’, ‘pending-update’, and friends to operate on the
+placeholder.
+
+   Tokens are valid until they reach a terminal state.  Operations on a
+terminal token are no-ops with a ‘:debug’ warning.
+
+   The lifecycle states are:
+
+‘:scheduled’
+     The placeholder has been created but no work has begun (or the
+     caller has not yet sent any signal).
+
+‘:running’
+     The caller has indicated that work is in progress.  This state is
+     reserved for future use; current call-sites typically transition
+     directly from ‘:scheduled’ to ‘:streaming’ or to a terminal state.
+
+‘:streaming’
+     At least one chunk has been delivered via ‘pending-resolve-stream’.
+     The end marker's insertion-type is ‘t’, so subsequent chunks append
+     at the end naturally.
+
+‘:resolved’
+     Terminal.  The placeholder's region has been replaced with the
+     final content.
+
+‘:rejected’
+     Terminal.  The placeholder failed; the region carries an error
+     glyph plus reason.
+
+‘:cancelled’
+     Terminal.  The user (or library) cancelled the placeholder; the
+     region carries a small cancelled glyph.
+
+‘:expired’
+     Terminal.  Reserved for future use.
+
+   ‘pending-active-p’ returns non-nil for the first three states
+(‘:scheduled’, ‘:running’, ‘:streaming’); the others are terminal.
+
+4.2 The pending registry
+========================
+
+All active placeholders are recorded in a global registry.  Two public
+functions surface it:
+
+‘pending-alist’
+     Returns ‘((ID . STRUCT) ...)’ for every registered placeholder,
+     including terminal ones still in transit.  Order is unspecified;
+     the alist is fresh and safe to mutate.
+
+‘pending-list-active’
+     Returns a list of structs in active states only.  Accepts optional
+     ‘BUFFER’ and ‘GROUP’ filters.
+
+   The registry is also the data source for ‘M-x pending-list’ and the
+mode-line lighter.
+
+4.3 Lighter vs region highlight
+===============================
+
+The library distinguishes two visual treatments:
+
+*Region highlight*
+     The body of the placeholder uses the ‘pending-highlight’ face so
+     the user can see _where_ the asynchronous content will land.
+
+*Lighter*
+     A small bold badge (face ‘pending-lighter’) attached to the
+     overlay's ‘before-string’.  This is the prominent visual marker
+     that draws the eye.
+
+   The simple API uses a static lighter (‘:lighter’ indicator).  The
+rich API can substitute an animated spinner, a determinate bar, or an
+ETA bar in place of the static lighter.
+
+4.4 Read-only protection
+========================
+
+While a placeholder is active, its inserted text is read-only via text
+properties:
+
+   • ‘read-only t’
+   • ‘front-sticky '(read-only)’ so insertions just before the
+     placeholder are blocked.
+   • ‘rear-nonsticky '(read-only)’ so insertions just after it are
+     allowed.
+
+   The user can edit before and after the placeholder freely, but not
+the placeholder body itself.  The library binds ‘inhibit-read-only’
+during its own operations so internal swaps still work.
+
+   In adopt mode (‘pending-make’ with explicit ‘:start’ and ‘:end’), the
+library does _not_ retroactively add read-only properties -- the caller
+owns that text.
+
+4.5 Auto-cancellation paths
+===========================
+
+Several edge conditions auto-cancel an in-flight placeholder so it
+cannot strand state:
+
+*Region deletion*
+     If the user deletes the entire placeholder region, the overlay
+     collapses to zero length and a ‘modification-hook’ cancels with
+     reason ‘:region-deleted’.
+
+*Buffer kill*
+     ‘kill-buffer-hook’ iterates the buffer's pending registry and
+     cancels each with reason ‘:buffer-killed’.
+
+*Deadline*
+     When ‘pending-make’ is called with ‘:deadline N’, a one-shot timer
+     fires ‘pending-reject’ with reason ‘:timed-out’ if the placeholder
+     is still active after N seconds.
+
+*Process death*
+     ‘pending-attach-process’ wraps the process sentinel; if the process
+     dies non-cleanly (or cleanly without an explicit resolve), the
+     placeholder is rejected with a reason derived from
+     ‘process-status’.
+
+*Emacs exit*
+     When ‘pending-confirm-on-emacs-exit’ is non-nil and active
+     placeholders exist, ‘kill-emacs-query-functions’ prompts before
+     exit.
+
+
+File: pending.info,  Node: Simple API,  Next: Rich API,  Prev: Concepts,  Up: Top
+
+5 Simple API
+************
+
+The simple positional API is the recommended starting point.  Each
+function returns a token; pass that token to
+‘pending-resolve’/‘pending-cancel’ when ready.
+
+ -- Function: pending-overlay beg-or-token &optional end str
+     Two call shapes are supported.
+
+     *Constructor:* ‘(pending-overlay BEG END STR)’.  Mark the region
+     ‘[BEG, END]’ in the current buffer as pending an asynchronous
+     change.  Highlight the region with ‘pending-highlight’ face and
+     show STR as a lighter badge at BEG using ‘pending-lighter’ face.
+     If BEG equals END, no region is highlighted; only the lighter
+     shows.  Returns a TOKEN (a ‘pending’ struct) usable with
+     ‘pending-resolve’, ‘pending-cancel’, and ‘pending-goto’.
+
+     *Accessor:* ‘(pending-overlay TOKEN)’.  Back-compat accessor:
+     return the live overlay object owned by TOKEN, or nil.  Equivalent
+     to ‘(pending-ov TOKEN)’.
+
+          (let ((tok (pending-overlay (region-beginning) (region-end)
+                                      "summarising")))
+            (gptel-request (buffer-substring (region-beginning) (region-end))
+             :callback (lambda (text _) (pending-resolve tok text))))
+
+ -- Function: pending-insert pos str
+     Mark POS as pending insertion of asynchronously-computed text.
+     Shows STR as a lighter badge at POS. No region is highlighted (BEG
+     = END). Returns a token.  When eventually resolved with text via
+     ‘pending-resolve’, the text is inserted at POS.
+
+          (pending-insert (point) "fetching weather")
+
+ -- Function: pending-resolve token text
+     Atomically replace TOKEN's region with TEXT. Transition to
+     ‘:resolved’.  Returns t on success, nil if TOKEN was already in a
+     terminal state.
+
+     The replacement happens inside an ‘atomic-change-group’, so undo
+     sees one step.  ‘inhibit-read-only’ and
+     ‘inhibit-modification-hooks’ are bound during the swap.  Side
+     effects: removes the overlay, clears markers, unregisters the
+     token, cancels any deadline timer, and runs the ‘:on-resolve’
+     callback once (errors there are caught and warned).
+
+          (pending-resolve tok "Hello, world!")
+
+ -- Function: pending-cancel p &optional reason
+     Cancel P, optionally with REASON (default ‘:cancelled-by-user’).
+     Calls P's ‘:on-cancel’ callback _first_, so the caller can abort
+     underlying work (e.g.  kill a process).  Then transitions P to
+     ‘:cancelled’ and replaces the region with a small cancelled glyph
+     (‘✗ REASON’) faced with ‘pending-cancelled-face’.
+
+     The ‘:on-cancel’ callback is wrapped in ‘condition-case’; a buggy
+     callback (or one that signals ‘quit’) does not break the cancel
+     pipeline.
+
+          (pending-cancel tok)               ; cancelled-by-user
+          (pending-cancel tok :timed-out)    ; explicit reason
+
+ -- Command: pending-goto token
+     Move point to TOKEN's start position.  Switches to TOKEN's buffer
+     if not already current.  Signals a ‘user-error’ if the buffer is
+     dead.
+
+     Interactively, prompts via ‘completing-read’ over the registered
+     placeholders.
+
+          M-x pending-goto RET <pick from list> RET
+
+ -- Command: pending-list
+     Display all registered pending placeholders in a tabulated-list
+     buffer.  *Note Interactive UI::, for the full description.
+
+ -- Function: pending-alist
+     Return an alist snapshot ‘((ID . STRUCT) ...)’ of all currently
+     registered pending placeholders.  Order is unspecified.  This is a
+     fresh list; mutating it does not affect the registry.
+
+          (length (pending-alist))                                 ; how many
+          (mapcar (lambda (cell) (pending-label (cdr cell)))       ; all labels
+                  (pending-alist))
+
+ -- Command: pending-cancel-at-point
+     Cancel the pending placeholder at point.  Signals a ‘user-error’ if
+     no placeholder covers point.  Bound to ‘RET’ and ‘mouse-1’ over a
+     placeholder by ‘pending-overlay-map’.
+
+
+File: pending.info,  Node: Rich API,  Next: Indicator modes,  Prev: Simple API,  Up: Top
+
+6 Rich API
+**********
+
+The rich keyword API provides full control: streaming, animation, ETA
+bars, deadlines, and process attachment.
+
+ -- Function: pending-make buffer &key label start end indicator
+          deadline eta percent face spinner-style on-cancel on-resolve
+          group
+     The full constructor.  Inserts (or adopts) a placeholder in BUFFER.
+     Returns the new ‘pending’ struct.
+
+     Insertion modes:
+
+     *Insert mode*
+          If both START and END are nil, insert a new placeholder at
+          point in BUFFER. The inserted label text is propertized
+          read-only.
+
+     *Adopt mode*
+          If both START and END are non-nil (positions or markers),
+          adopt the existing region ‘[START, END]’; do not insert text.
+          Adopt mode does NOT retroactively add read-only properties to
+          the existing text; the caller owns that text.
+
+     It is an error to supply only one of START or END.
+
+     Keyword          Meaning
+     --------------------------------------------------------------------------
+     ‘:label’         Short string shown inside the placeholder.  Default
+                      ‘Pending’.
+                      
+     ‘:start’         Adopt mode endpoints (positions or markers).  Both or
+     ‘:end’           neither.
+                      
+     ‘:indicator’     ‘:spinner’ (default), ‘:percent’, ‘:eta’, or
+                      ‘:lighter’ (static badge).
+                      
+     ‘:percent’       Initial fraction in ‘[0.0, 1.0]’ for ‘:percent’ mode.
+                      
+     ‘:eta’           Estimated total seconds for ‘:eta’ mode.
+                      
+     ‘:deadline’      Wall-clock seconds until auto-rejection with reason
+                      ‘:timed-out’.
+                      
+     ‘:face’          Override ‘pending-face’ for the placeholder body.
+                      
+     ‘:spinner-style’ Key into ‘pending-spinner-styles’.
+                      
+     ‘:on-cancel’     Function ‘(P)’ called _before_ the cancellation
+                      pipeline.  Abort underlying work here.
+                      
+     ‘:on-resolve’    Function ‘(P)’ called once on transition to any
+                      terminal state.
+                      
+     ‘:group’         Symbol for filtering via ‘pending-list-active’.
+
+     Side effects: inserts placeholder text (insert mode), creates and
+     adopts an overlay, registers the struct, optionally schedules the
+     deadline timer, and installs the buffer-kill hook locally.  Signals
+     ‘pending-error’ on invalid arguments or a dead/read-only buffer.
+
+          (pending-make (current-buffer)
+                        :label "Calling Claude"
+                        :indicator :spinner
+                        :on-cancel (lambda (_) (gptel-abort)))
+
+ -- Function: pending-update p &key label percent eta indicator
+     Mutate slots mid-flight without changing state.  Useful when the
+     caller learns more about progress -- e.g.  switch from ‘:spinner’
+     to ‘:percent’ once the total work size is known.
+
+     Clears the spinner-glyph render cache so any indicator/style
+     changes apply on the next tick.  No-op (with debug warning) if P is
+     in a terminal state.
+
+          (pending-update tok :percent 0.42)
+          (pending-update tok :indicator :eta :eta 10.0)
+
+ -- Function: pending-resolve-stream p chunk
+     Append CHUNK (a string) to P's region.  The spinner / progress
+     indicator stays visible.
+
+     On the first chunk (when P is ‘:scheduled’ or ‘:running’) the
+     loading-label content is deleted and replaced by CHUNK, the end
+     marker's insertion-type is flipped to t, and the status transitions
+     to ‘:streaming’.  Subsequent chunks append at the end marker, which
+     advances with the insert because of its insertion-type.
+
+     Streamed text gets the same read-only properties as the initial
+     label.  The library binds ‘inhibit-read-only’ and
+     ‘inhibit-modification-hooks’ so its own inserts do not retrigger
+     the cancel-on-collapse hook.
+
+     This does NOT finalize.  The caller must follow up with
+     ‘pending-finish-stream’, ‘pending-reject’, or ‘pending-cancel’.
+
+     If P is already terminal, this is a no-op (debug warning); the
+     chunk is dropped.  Signals ‘wrong-type-argument’ if CHUNK is not a
+     string; an empty string is a no-op.
+
+          (pending-resolve-stream tok "Once upon a time, ")
+          (pending-resolve-stream tok "in a faraway land...")
+
+ -- Function: pending-finish-stream p
+     Finalize a streamed placeholder.  Transitions P from ‘:streaming’
+     to ‘:resolved’.  Locks the end marker, strips read-only properties
+     from the streamed region (so the resolved text becomes editable),
+     removes the overlay's animated decorations, deletes the overlay,
+     unregisters P, and fires its ‘:on-resolve’ callback.
+
+     If P is ‘:scheduled’ or ‘:running’ (no chunks were ever streamed),
+     behaves like ‘(pending-resolve P "")’.  If P is already terminal, a
+     no-op with debug warning.
+
+          (pending-finish-stream tok)
+
+ -- Function: pending-reject p reason &optional replacement-text
+     Mark P as failed with REASON and replace its region.  REASON should
+     be a string or a keyword/symbol describing the failure.
+     REPLACEMENT-TEXT defaults to a glyph plus the reason rendered with
+     ‘pending-error-face’.
+
+     Side effects mirror ‘pending-resolve’ (removes overlay, clears
+     markers, unregisters, cancels timer, runs ‘:on-resolve’).
+
+          (pending-reject tok "API rate limit exceeded")
+          (pending-reject tok :network-down "Try again later.")
+
+ -- Function: pending-attach-process p process
+     Wire PROCESS so its death rejects P appropriately.  The process's
+     existing sentinel, if any, is preserved: it runs first, then a
+     wrapper inspects ‘process-status’ and calls ‘pending-reject’ on
+     non-clean exit.  The reason is derived from the live process
+     status, which is robust against localized event strings.
+
+     Behaviour by status:
+
+     ‘exit (code 0)’
+          If P is still active, reject with ‘process exited without
+          resolving’.
+
+     ‘exit (non-zero)’
+          Reject with ‘process: exited with code N’.
+
+     ‘signal’
+          Reject with ‘process: killed (signal N)’.
+
+     ‘failed’
+          Reject with ‘process: failed’.
+
+     ‘closed’
+          Reject with ‘process: connection closed’.
+
+     ‘run / open / stop / listen / connect’
+          No-op; the placeholder remains active.
+
+     If multiple processes are attached over P's lifetime, the LAST
+     attach wins for the ‘attached-process’ slot, but each prior
+     process's wrapper still chains through.  A stale process exit will
+     still flow into ‘pending-reject’, which is a no-op once P is
+     terminal because of the single-resolution guard.
+
+          (let ((proc (start-process "build" nil "make")))
+            (pending-attach-process tok proc))
+
+ -- Function: pending-active-p p
+     Return non-nil if P is in an active (non-terminal) lifecycle state.
+     The active states are ‘:scheduled’, ‘:running’, and ‘:streaming’.
+
+ -- Function: pending-status p
+     Return P's current status keyword.
+
+ -- Function: pending-at &optional pos buffer
+     Return the pending struct at POS in BUFFER, or nil if none.  POS
+     defaults to point; BUFFER defaults to the current buffer.  Searches
+     the overlays at POS for one carrying a ‘pending’ property.
+
+ -- Function: pending-list-active &optional buffer group
+     Return the list of active pending structs.  Optional BUFFER and
+     GROUP filter the result.  Order within the result is unspecified.
+
+
+File: pending.info,  Node: Indicator modes,  Next: Integrations,  Prev: Rich API,  Up: Top
+
+7 Indicator modes
+*****************
+
+Choose a visual via the ‘:indicator’ keyword to ‘pending-make’.  The
+simple positional API always uses ‘:lighter’; the rich API defaults to
+‘:spinner’.
+
+Indicator   Visual                    Use when
+---------------------------------------------------------------------------
+‘:spinner’  Animated glyph + label    Duration unknown but the library
+            (default).                should look alive.
+                                      
+‘:percent’  Spinner glyph + bar +     Caller can supply a fraction in
+            percent.                  ‘[0.0, 1.0]’.
+                                      
+‘:eta’      Spinner glyph + bar +     Caller has a rough guess at total
+            remaining-seconds         wall-clock seconds.
+            estimate.                 
+‘:lighter’  Static badge.  No         Visual marker only; no progress to
+            animation.                convey.
+
+   The ‘:eta’ indicator uses a piecewise-asymptotic formula:
+
+   • 0 \le ratio \le 0.8 -- linear: fraction = ratio.
+   • 0.8 < ratio \le 1.0 -- linear, slope 0.75: hits 0.95 at ratio = 1.
+   • ratio > 1.0 -- asymptote: 1 - 0.05 e^{-(ratio-1)}.
+
+   This avoids the "100% but still working" effect that bothers users.
+The bar saturates toward (but never reaches) 100% past the deadline, so
+callers can rely on "not done until I say so."
+
+   Spinner styles ship with: ‘dots-1’, ‘dots-2’, ‘line’, ‘arc’, ‘clock’.
+Add your own:
+
+     (add-to-list 'pending-spinner-styles
+                  '(my-style . ["a" "b" "c"]))
+
+
+File: pending.info,  Node: Integrations,  Next: Interactive UI,  Prev: Indicator modes,  Up: Top
+
+8 Integrations
+**************
+
+Each recipe below is a copy-pasteable function.  Adapt the prompts,
+commands, and URLs to taste.
+
+8.1 gptel -- streaming response
+===============================
+
+     (defun my/gptel-pending-stream (prompt)
+       "Send PROMPT via gptel; stream the response into a pending placeholder."
+       (let ((p (pending-make (current-buffer)
+                              :label "Calling Claude"
+                              :indicator :spinner
+                              :on-cancel (lambda (_)
+                                           (gptel-abort (current-buffer))))))
+         (gptel-request
+          prompt
+          :stream t
+          :position (pending-end p)
+          :callback (lambda (chunk info)
+                      (cond
+                       ((stringp chunk) (pending-resolve-stream p chunk))
+                       ((plist-get info :error)
+                        (pending-reject p (plist-get info :error)))
+                       (t (pending-finish-stream p)))))
+         p))
+
+8.2 gptel -- non-streaming response
+===================================
+
+     (defun my/gptel-pending-call (prompt)
+       "Send PROMPT via gptel; replace the pending placeholder with the response."
+       (let ((p (pending-insert (point) "Calling Claude")))
+         (gptel-request
+          prompt
+          :callback (lambda (response info)
+                      (cond
+                       ((stringp response) (pending-resolve p response))
+                       ((plist-get info :error)
+                        (pending-reject p (plist-get info :error)))
+                       (t (pending-cancel p)))))
+         p))
+
+8.3 ‘make-process’ -- capture stdout
+====================================
+
+     (defun my/run-shell-pending (cmd)
+       "Run CMD in a shell; stream stdout into a pending placeholder."
+       (let* ((p (pending-make (current-buffer)
+                               :label (format "Running: %s" cmd)
+                               :indicator :spinner))
+              (proc (make-process
+                     :name "shell-pending"
+                     :buffer nil
+                     :command (list shell-file-name "-c" cmd)
+                     :filter (lambda (_proc out)
+                               (pending-resolve-stream p out))
+                     :sentinel (lambda (_proc event)
+                                 (if (string-prefix-p "finished" event)
+                                     (pending-finish-stream p)
+                                   (pending-reject p (string-trim event)))))))
+         (pending-attach-process p proc)
+         (setf (pending-on-cancel p) (lambda (_) (delete-process proc)))
+         p))
+
+8.4 ‘url-retrieve’ -- async fetch
+=================================
+
+     (defun my/fetch-pending (url)
+       "GET URL; replace the pending placeholder with its body."
+       (let ((p (pending-make (current-buffer)
+                              :label (format "Fetching %s" url)
+                              :indicator :eta :eta 5.0
+                              :deadline 60)))
+         (url-retrieve
+          url
+          (lambda (status)
+            (cond
+             ((plist-get status :error)
+              (pending-reject p (format "%S" (plist-get status :error))))
+             (t
+              (goto-char (point-min))
+              (re-search-forward "^$" nil t)
+              (pending-resolve p (buffer-substring (point) (point-max)))))))
+         p))
+
+8.5 Pure-delay timer
+====================
+
+A useful template for tests and demos:
+
+     (defun my/delay-pending (seconds text)
+       "Show a pending placeholder; replace with TEXT after SECONDS."
+       (let ((p (pending-insert (point) (format "wait %ds" seconds))))
+         (run-at-time seconds nil
+                      (lambda ()
+                        (when (pending-active-p p)
+                          (pending-resolve p text))))
+         p))
+
+8.6 Generic callback-driven async
+=================================
+
+     (defun my/with-pending (label callback)
+       "Show a pending placeholder labelled LABEL.
+     CALLBACK is called with the token; it must arrange to call
+     `pending-resolve' or `pending-reject' on the token."
+       (let ((p (pending-make (current-buffer)
+                              :label label
+                              :indicator :spinner)))
+         (funcall callback p)
+         p))
+
+
+File: pending.info,  Node: Interactive UI,  Next: Mode-line lighter,  Prev: Integrations,  Up: Top
+
+9 Interactive UI
+****************
+
+9.1 The ‘*Pending*’ buffer
+==========================
+
+‘M-x pending-list’ opens a tabulated-list view with one row per
+registered placeholder.
+
+Column      Width     Meaning
+----------------------------------------------------------------------------
+ID          16        Generated symbol name (‘pending-N’).
+Buffer      24        Buffer hosting the placeholder.
+Label       30        The label string, truncated.
+Status      12        Status keyword, e.g.  ‘:streaming’.
+Elapsed     8         Wall-clock seconds since creation.
+ETA         8         The placeholder's ETA, or ‘-’.
+Group       10        The placeholder's group symbol, or ‘-’.
+
+   Bindings:
+
+‘g’
+     Re-read the registry.
+‘RET’
+     Pop to the placeholder's buffer.
+‘c’
+     Cancel; reason ‘:cancelled-from-list’.
+‘q’
+     Bury the buffer.
+
+   The list does not auto-refresh in v0.1; press ‘g’ to update.
+Auto-refresh is on the v0.2 roadmap.
+
+9.2 Cancel from point
+=====================
+
+‘M-x pending-cancel-at-point’ cancels the placeholder under point.  The
+library installs an overlay keymap on every placeholder binding ‘RET’
+and ‘mouse-1’ to the same command:
+
+ -- Variable: pending-overlay-map
+     Keymap installed on placeholder overlays.  Bound to ‘RET’ and
+     ‘mouse-1’ for ‘pending-cancel-at-point’.
+
+9.3 The demo
+============
+
+ -- Command: pending-demo
+     Open ‘*pending-demo*’ with three concurrent placeholders
+     demonstrating the spinner, ETA, and percent indicators.  They
+     resolve themselves over about 12 seconds.  Useful for visual
+     inspection of the library on the current theme.
+
+
+File: pending.info,  Node: Mode-line lighter,  Next: Customization,  Prev: Interactive UI,  Up: Top
+
+10 Mode-line lighter
+********************
+
+ -- Command: global-pending-lighter-mode
+     A global minor mode that appends a small construct to
+     ‘global-mode-string’.  When enabled, the mode-line displays:
+
+           [3⏳~5s]
+
+     Meaning: _3 active placeholders; the smallest remaining ETA across
+     them is approximately 5 seconds_.  When no placeholder has an ETA
+     in the future, the trailing tilde-segment is omitted: ‘[3⏳]’.
+     When no placeholders are active, the lighter is hidden entirely.
+
+     The lighter is propertized with ‘pending-spinner-face’, carries a
+     help-echo tooltip, and binds ‘mouse-1’ to ‘pending-list’.
+
+ -- Function: pending-mode-line-string
+     Compute the lighter string.  Return a propertized string or nil.
+     Suitable for incorporating manually into a custom mode-line
+     construct without enabling the global mode.
+
+
+File: pending.info,  Node: Customization,  Next: Hooks and callbacks,  Prev: Mode-line lighter,  Up: Top
+
+11 Customization
+****************
+
+11.1 User options
+=================
+
+ -- User Option: pending-fps
+     Animation rate of pending placeholders, in frames per second.  Used
+     by the single global animation timer that walks the registry on
+     each tick.  A value of 10 (default) is the conventional sweet spot
+     for in-buffer spinners -- fast enough to read as motion, slow
+     enough not to hammer redisplay.
+
+ -- User Option: pending-bar-width
+     Width of the textual progress bar, in cells.  Default 16.  Used by
+     the ‘:percent’ and ‘:eta’ indicators.
+
+ -- User Option: pending-default-spinner-style
+     Default key into ‘pending-spinner-styles’ for new placeholders.
+     Default ‘'dots-1’.  Per-placeholder override available via the
+     ‘:spinner-style’ keyword to ‘pending-make’.
+
+ -- User Option: pending-spinner-styles
+     Alist mapping spinner style symbols to vectors of frame strings.
+     Built-in styles: ‘dots-1’, ‘dots-2’, ‘line’, ‘arc’, ‘clock’.  Add
+     your own with ‘add-to-list’.
+
+ -- User Option: pending-bar-style
+     Bar character set: ‘eighths’ (Unicode eighth-block characters,
+     default) or ‘ascii’ (ASCII fallback for terminals where Unicode
+     block elements don't render).
+
+ -- User Option: pending-bar-family
+     Font family used for the progress bar segment, or nil.  When
+     non-nil, the bar text is rendered in this family so that
+     proportional buffer faces do not break alignment.  When nil, the
+     bar inherits the surrounding face -- variable-pitch users may then
+     see misalignment.
+
+ -- User Option: pending-allow-read-only
+     If non-nil, allow placement of placeholders in read-only buffers.
+     By default ‘pending-make’ refuses to operate on a buffer where
+     ‘buffer-read-only’ is non-nil; setting this to t binds
+     ‘inhibit-read-only’ during insertion and resolution.  Useful for
+     hosts like ‘compilation-mode’ or chat buffers that flip read-only
+     on the caller's behalf.
+
+ -- User Option: pending-label-max-width
+     Maximum width, in characters, of a placeholder's visible label.
+     Default 60.  Labels longer than this are truncated with an
+     ellipsis; the full label remains available in the placeholder's
+     tooltip.
+
+ -- User Option: pending-confirm-on-emacs-exit
+     If non-nil, prompt before exiting Emacs while placeholders are
+     active.  Implemented via ‘pending--kill-emacs-query’, which is
+     registered on ‘kill-emacs-query-functions’ at load time.  When nil
+     (the default) the query function returns t unconditionally and the
+     exit is not blocked.
+
+11.2 Faces
+==========
+
+ -- Face: pending-highlight
+     Background of the highlighted region of a pending overlay
+     (‘BEG..END’).  Applied to the placeholder body so the user can see
+     where the asynchronously-arriving content will land.
+
+ -- Face: pending-lighter
+     Static badge shown at BEG of a pending overlay.  Bold white-on-red
+     by default for high visibility.  The lighter is a visual badge
+     attached to the overlay's ‘before-string’, not text in the buffer.
+
+ -- Face: pending-face
+     Compatibility alias for ‘pending-highlight’.  Older code paths
+     reference ‘pending-face’ for the placeholder body; new code should
+     prefer ‘pending-highlight’.
+
+ -- Face: pending-spinner-face
+     The before-string spinner glyph.
+
+ -- Face: pending-progress-face
+     The after-string progress bar and ETA text.  Apply
+     ‘pending-bar-family’ on top of this face when set, to keep
+     alignment under variable-pitch buffer faces.
+
+ -- Face: pending-error-face
+     Replacement text for rejected placeholders.
+
+ -- Face: pending-cancelled-face
+     Replacement text for cancelled placeholders.
+
+
+File: pending.info,  Node: Hooks and callbacks,  Next: Comparison,  Prev: Customization,  Up: Top
+
+12 Hooks and lifecycle callbacks
+********************************
+
+12.1 Per-placeholder callbacks
+==============================
+
+12.1.1 ‘:on-cancel’
+-------------------
+
+Called _before_ the cancellation pipeline runs.  Abort underlying work
+here -- kill processes, abort gptel requests, cancel timers.
+
+     (pending-make (current-buffer)
+                   :label "Calling Claude"
+                   :on-cancel (lambda (p)
+                                (gptel-abort (pending-buffer p))))
+
+   If ‘:on-cancel’ signals an error or ‘quit’, the cancel pipeline
+catches it and proceeds; the placeholder cannot get stranded.
+
+12.1.2 ‘:on-resolve’
+--------------------
+
+Called _once_ on transition to any terminal state (‘:resolved’,
+‘:rejected’, ‘:cancelled’, ‘:expired’).  Inspect ‘(pending-status p)’
+inside the callback to differentiate.
+
+     (pending-make (current-buffer)
+                   :label "Calling Claude"
+                   :on-resolve (lambda (p)
+                                 (message "Done: %s -> %s"
+                                          (pending-label p)
+                                          (pending-status p))))
+
+12.2 Global hooks installed by the library
+==========================================
+
+‘kill-buffer-hook’
+     Buffer-local.  Cancels every placeholder in the buffer being killed
+     with reason ‘:buffer-killed’.
+
+‘kill-emacs-query-functions’
+     When ‘pending-confirm-on-emacs-exit’ is non-nil, prompts before
+     exit if active placeholders exist.
+
+‘window-buffer-change-functions’
+     Re-arms the parked animation timer when a placeholder's buffer
+     becomes visible.
+
+   ‘pending-unload-function’ cleans up the timer and removes the global
+hooks on ‘unload-feature’.
+
+12.3 Errors
+===========
+
+ -- Error: pending-error
+     The library's own error symbol.  Signalled by ‘pending-make’ for
+     invalid arguments (dead buffer, read-only buffer when not allowed,
+     mismatched START/END, out-of-bounds positions).
+
+
+File: pending.info,  Node: Comparison,  Next: Caveats,  Prev: Hooks and callbacks,  Up: Top
+
+13 Comparison with ‘org-pending’
+********************************
+
+Bruno Barbier's ‘org-pending’ is a closely related upstream Org patch
+(branch ‘bba-pending-contents’) that nevertheless declares itself
+independent of Org mode.  It solves a similar problem from a different
+angle.
+
+Aspect         ‘org-pending’                 ‘pending’
+---------------------------------------------------------------------------
+Distribution   Org-mode patch                Standalone library
+                                             
+Org            None (but namespace and       None
+dependency     prefix imply Org)             
+State          ‘:scheduled → :pending →      Adds ‘:running’,
+machine        :success/:failure’            ‘:streaming’, ‘:cancelled’,
+                                             ‘:expired’
+                                             
+Animation      Static Unicode glyph          Animated spinner (10 fps,
+                                             single global timer)
+                                             
+Progress bar   Single line of text in        Eighth-block Unicode bar
+               ‘after-string’                (or ASCII fallback)
+                                             
+Streaming      Message-passing via           First-class
+               ‘org-pending-send-update’     ‘pending-resolve-stream’ /
+                                             ‘-finish-stream’
+                                             
+Description    ‘*Region Lock*’ describe      Tabulated list (deferred
+UI             buffer                        describe-buffer)
+                                             
+Indirect       Read-only projection          Not yet -- single-buffer
+buffers                                      scope
+                                             
+Kill-emacs     Built in                      Same hook, gated by
+query                                        ‘pending-confirm-on-emacs-exit’
+
+   The two libraries can coexist.  Pick whichever suits your caller: if
+you live in Org and want minimal animation, prefer ‘org-pending’; if you
+want streaming and progress visualization out of the box, prefer
+‘pending’.
+
+
+File: pending.info,  Node: Caveats,  Next: Roadmap,  Prev: Comparison,  Up: Top
+
+14 Limitations and caveats
+**************************
+
+   • *~50 placeholders per buffer guideline.*  Each placeholder is an
+     overlay, and overlays have O(n) scan cost for some buffer
+     operations.  Keep concurrent counts modest.
+
+   • *Variable-pitch alignment.*  The ‘:percent’ and ‘:eta’ bars assume
+     a monospaced cell width.  Under variable-pitch buffer faces, the
+     bar may look ragged.  Set ‘pending-bar-family’ to a fixed-pitch
+     family to compensate.
+
+   • *No SVG spinner in v0.1.*  Spinners are text glyphs only.  SVG
+     spinners (and a fringe-bitmap indicator) are on the v0.2 roadmap.
+
+   • *Manual refresh of ‘*Pending*’ list.*  Press ‘g’ to update; the
+     list does not auto-refresh on registry mutation in v0.1.
+
+   • *Single-buffer scope.*  A placeholder's overlay and read-only text
+     properties live in one buffer.  There is no projection across
+     indirect buffers in v0.1; ‘org-pending’-style indirect-buffer
+     projection is on the roadmap.
+
+   • *No cross-buffer multi-region pending.*  A single pending struct
+     represents one contiguous region in one buffer.  Coordinate
+     multiple related placeholders via the ‘:group’ keyword and
+     ‘pending-list-active’.
+
+
+File: pending.info,  Node: Roadmap,  Next: Development,  Prev: Caveats,  Up: Top
+
+15 Roadmap
+**********
+
+Items deferred past the v0.1.0 tag:
+
+   • Auto-refresh of ‘*Pending*’ on registry mutation.
+   • Pulse-on-resolve flash via ‘pulse.el’.
+   • ‘pending-as-promise’ adapter for ‘aio’ users.
+   • SVG spinner for graphical frames.
+   • Fringe bitmap indicator beside the placeholder.
+   • ‘*Region Lock*’-style description buffer for a single placeholder.
+   • Indirect-buffer projection of read-only properties.
+   • ‘pending-test--with-mocked-time’ macro for deterministic
+     fast-forward testing.
+
+
+File: pending.info,  Node: Development,  Next: GNU Free Documentation License,  Prev: Roadmap,  Up: Top
+
+16 Development
+**************
+
+16.1 Building
+=============
+
+This package uses Eask (https://github.com/emacs-eask/cli) for build
+automation, with a Makefile wrapper.
+
+     # Install dependencies
+     eask install-deps
+
+     # Compile (warning-free)
+     eask compile
+
+     # Run tests (72 ERT tests as of v0.1.0)
+     eask test ert pending-test.el
+
+     # All-in-one via Make
+     make compile
+     make test
+     make docs       # build doc/pending.info
+     make clean
+
+16.2 Generating the manual
+==========================
+
+The Texinfo source lives at ‘doc/pending.texi’; the built ‘pending.info’
+ships in the package.
+
+     make info       # build doc/pending.info
+     make html       # build doc/pending.html (preview)
+     make clean-docs
+
+16.3 Interactive development
+============================
+
+     ;; Reload the library after editing
+     (unload-feature 'pending t)
+     (load-file "pending.el")
+
+     ;; Run a single test
+     M-x ert RET pending-test/scheduled-to-resolved RET
+
+     ;; Open the demo
+     M-x pending-demo
+
+16.4 Contributing
+=================
+
+Bug reports and pull requests are welcome via GitHub.  When filing an
+issue, please include the Emacs version, whether you are running
+graphical or terminal Emacs, steps to reproduce, and a backtrace if
+applicable.
+
+   When sending a PR, please match the existing code style (lexical
+binding, double-dash for internal symbols, comprehensive docstrings),
+add ERT tests for new behaviour, ensure ‘eask compile’ is warning-free
+and ‘eask test’ is green, and run ‘M-x checkdoc’ on touched files.
+
+
+File: pending.info,  Node: GNU Free Documentation License,  Next: Index,  Prev: Development,  Up: Top
+
+Appendix A GNU Free Documentation License
+*****************************************
+
+The GNU Free Documentation License (GFDL) Version 1.3 applies to this
+manual.  See <https://www.gnu.org/licenses/fdl-1.3.html> for the full
+text.
+
+
+File: pending.info,  Node: Index,  Prev: GNU Free Documentation License,  Up: Top
+
+Index
+*****
+
+ [index ]
+* Menu:
+
+* auto-cancellation:                     Concepts.            (line 110)
+* buffer-killed:                         Concepts.            (line 110)
+* callbacks:                             Hooks and callbacks. (line   5)
+* caveats:                               Caveats.             (line   6)
+* comparison:                            Comparison.          (line   6)
+* concepts:                              Concepts.            (line   5)
+* customization:                         Customization.       (line   5)
+* demo:                                  Interactive UI.      (line  50)
+* development:                           Development.         (line   6)
+* edit-survival:                         Concepts.            (line  90)
+* errors:                                Hooks and callbacks. (line  58)
+* ETA:                                   Indicator modes.     (line   6)
+* faces:                                 Customization.       (line  66)
+* global-pending-lighter-mode:           Mode-line lighter.   (line   6)
+* global-pending-lighter-mode <1>:       Mode-line lighter.   (line   6)
+* global-pending-lighter-mode <2>:       Mode-line lighter.   (line   7)
+* gptel:                                 Integrations.        (line  12)
+* highlight:                             Concepts.            (line  72)
+* hooks:                                 Hooks and callbacks. (line   6)
+* indicator:                             Indicator modes.     (line   6)
+* installation:                          Installation.        (line   6)
+* integrations:                          Integrations.        (line   6)
+* interactive UI:                        Interactive UI.      (line   6)
+* introduction:                          Introduction.        (line   6)
+* lighter:                               Concepts.            (line  72)
+* limitations:                           Caveats.             (line   6)
+* make-process:                          Integrations.        (line  50)
+* mode-line lighter:                     Mode-line lighter.   (line   6)
+* on-cancel:                             Hooks and callbacks. (line  12)
+* on-resolve:                            Hooks and callbacks. (line  26)
+* org-pending:                           Comparison.          (line   6)
+* overview:                              Introduction.        (line   6)
+* Pending buffer:                        Interactive UI.      (line   9)
+* pending list:                          Interactive UI.      (line   5)
+* pending struct:                        Concepts.            (line   9)
+* pending-active-p:                      Rich API.            (line 169)
+* pending-active-p <1>:                  Rich API.            (line 170)
+* pending-alist:                         Concepts.            (line  54)
+* pending-alist <1>:                     Simple API.          (line  80)
+* pending-alist <2>:                     Simple API.          (line  81)
+* pending-allow-read-only:               Customization.       (line  42)
+* pending-at:                            Rich API.            (line 176)
+* pending-at <1>:                        Rich API.            (line 177)
+* pending-attach-process:                Rich API.            (line 132)
+* pending-attach-process <1>:            Rich API.            (line 133)
+* pending-bar-family:                    Customization.       (line  35)
+* pending-bar-style:                     Customization.       (line  30)
+* pending-bar-width:                     Customization.       (line  16)
+* pending-cancel:                        Simple API.          (line  52)
+* pending-cancel <1>:                    Simple API.          (line  53)
+* pending-cancel-at-point:               Simple API.          (line  89)
+* pending-cancel-at-point <1>:           Simple API.          (line  90)
+* pending-cancelled-face:                Customization.       (line  92)
+* pending-cancelled-face <1>:            Customization.       (line  93)
+* pending-confirm-on-emacs-exit:         Customization.       (line  56)
+* pending-default-spinner-style:         Customization.       (line  20)
+* pending-demo:                          Interactive UI.      (line  50)
+* pending-demo <1>:                      Interactive UI.      (line  51)
+* pending-error:                         Hooks and callbacks. (line  58)
+* pending-error-face:                    Customization.       (line  89)
+* pending-error-face <1>:                Customization.       (line  90)
+* pending-face:                          Customization.       (line  76)
+* pending-face <1>:                      Customization.       (line  77)
+* pending-finish-stream:                 Rich API.            (line 107)
+* pending-finish-stream <1>:             Rich API.            (line 108)
+* pending-fps:                           Customization.       (line   9)
+* pending-goto:                          Simple API.          (line  66)
+* pending-goto <1>:                      Simple API.          (line  67)
+* pending-highlight:                     Customization.       (line  66)
+* pending-highlight <1>:                 Customization.       (line  67)
+* pending-insert:                        Simple API.          (line  30)
+* pending-insert <1>:                    Simple API.          (line  31)
+* pending-label-max-width:               Customization.       (line  50)
+* pending-lighter:                       Customization.       (line  71)
+* pending-lighter <1>:                   Customization.       (line  72)
+* pending-list:                          Simple API.          (line  76)
+* pending-list <1>:                      Simple API.          (line  77)
+* pending-list-active:                   Rich API.            (line 181)
+* pending-list-active <1>:               Rich API.            (line 182)
+* pending-list-cancel:                   Interactive UI.      (line  29)
+* pending-list-jump:                     Interactive UI.      (line  27)
+* pending-list-refresh:                  Interactive UI.      (line  25)
+* pending-make:                          Rich API.            (line   9)
+* pending-make <1>:                      Rich API.            (line  12)
+* pending-make <2>:                      Rich API.            (line   6)
+* pending-mode-line-string:              Mode-line lighter.   (line  20)
+* pending-mode-line-string <1>:          Mode-line lighter.   (line  21)
+* pending-overlay:                       Simple API.          (line  10)
+* pending-overlay <1>:                   Simple API.          (line  11)
+* pending-overlay-map:                   Interactive UI.      (line  43)
+* pending-overlay-map <1>:               Interactive UI.      (line  44)
+* pending-progress-face:                 Customization.       (line  84)
+* pending-progress-face <1>:             Customization.       (line  85)
+* pending-reject:                        Rich API.            (line 120)
+* pending-reject <1>:                    Rich API.            (line 121)
+* pending-resolve:                       Simple API.          (line  38)
+* pending-resolve <1>:                   Simple API.          (line  39)
+* pending-resolve-stream:                Rich API.            (line  82)
+* pending-resolve-stream <1>:            Rich API.            (line  83)
+* pending-spinner-face:                  Customization.       (line  81)
+* pending-spinner-face <1>:              Customization.       (line  82)
+* pending-spinner-styles:                Customization.       (line  25)
+* pending-status:                        Rich API.            (line 173)
+* pending-status <1>:                    Rich API.            (line 174)
+* pending-update:                        Rich API.            (line  70)
+* pending-update <1>:                    Rich API.            (line  71)
+* piecewise asymptote:                   Indicator modes.     (line  24)
+* positional API:                        Simple API.          (line   6)
+* progress bar:                          Indicator modes.     (line   6)
+* quick start:                           Quick start.         (line   6)
+* read-only:                             Concepts.            (line  90)
+* recipes:                               Integrations.        (line   6)
+* region-deleted:                        Concepts.            (line 110)
+* registry:                              Concepts.            (line  54)
+* requirements:                          Installation.        (line   6)
+* rich API:                              Rich API.            (line   6)
+* roadmap:                               Roadmap.             (line   6)
+* simple API:                            Simple API.          (line   6)
+* spinner:                               Indicator modes.     (line   6)
+* spinner styles:                        Indicator modes.     (line  34)
+* states, lifecycle:                     Concepts.            (line  17)
+* testing:                               Development.         (line   5)
+* timed-out:                             Concepts.            (line 110)
+* token:                                 Concepts.            (line   9)
+* url-retrieve:                          Integrations.        (line  72)
+* v0.2:                                  Roadmap.             (line   6)
+* why pending:                           Introduction.        (line  22)
+
+
+Tag Table:
+Node: Top762
+Node: Introduction2435
+Node: Installation4348
+Node: Quick start5262
+Node: Concepts6569
+Node: Simple API11258
+Node: Rich API15455
+Node: Indicator modes23454
+Node: Integrations25158
+Node: Interactive UI29642
+Node: Mode-line lighter31440
+Node: Customization32437
+Node: Hooks and callbacks36348
+Node: Comparison38486
+Node: Caveats40824
+Node: Roadmap42170
+Node: Development42815
+Node: GNU Free Documentation License44511
+Node: Index44848
+
+End Tag Table
+
+
+Local Variables:
+coding: utf-8
+End:
