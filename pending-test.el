@@ -604,6 +604,39 @@ visible again."
     (add-hook 'window-buffer-change-functions
               #'pending--on-window-buffer-change)))
 
+(ert-deftest pending-test/unregister-removes-buffer-local-hook ()
+  "Buffer-local `kill-buffer-hook' is removed when last placeholder leaves.
+`pending--register' adds the hook on first registration; it must
+come off when the buffer's local registry empties so a buffer that
+no longer hosts placeholders does not carry a stale hook."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-hook-cleanup*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "X")))
+          (should (memq #'pending--on-kill-buffer
+                        (buffer-local-value 'kill-buffer-hook buf)))
+          (pending-finish p "done")
+          (should-not (memq #'pending--on-kill-buffer
+                            (buffer-local-value 'kill-buffer-hook buf))))))))
+
+(ert-deftest pending-test/unload-function-strips-buffer-local-hooks ()
+  "`pending-unload-function' walks buffers and strips the local hook.
+A buffer that still has live placeholders carries the buffer-local
+`kill-buffer-hook' entry; unloading the feature must leave no
+dangling hooks behind on any live buffer."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-hook-unload*")
+      (with-current-buffer buf
+        (pending-make buf :label "still-active")
+        (should (memq #'pending--on-kill-buffer
+                      (buffer-local-value 'kill-buffer-hook buf)))
+        (pending-unload-function)
+        (should-not (memq #'pending--on-kill-buffer
+                          (buffer-local-value 'kill-buffer-hook buf)))
+        ;; Restore for the rest of the suite.
+        (add-hook 'window-buffer-change-functions
+                  #'pending--on-window-buffer-change)))))
+
 (ert-deftest pending-test/get-frames-fallback ()
   "`pending--get-frames' returns a vector for known keys and unknowns.
 Known keys come back from the user-facing `pending-spinner-styles';

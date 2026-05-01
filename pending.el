@@ -504,14 +504,22 @@ Cancels P's `attached-timer' if any.  Does NOT delete the overlay or
 clear markers — that happens in `pending--resolve-internal' since the
 order matters for atomic region replacement.
 
-Parks the global animation timer if the registry has emptied as a
-result of this removal."
+When the buffer-local registry empties as a result of removing P,
+the buffer-local `kill-buffer-hook' entry installed by
+`pending--register' is also removed so a buffer that no longer
+hosts any placeholders does not carry a stale hook into its
+remaining lifetime.
+
+Parks the global animation timer if the global registry has
+emptied as a result of this removal."
   (remhash (pending-id p) pending--registry)
   (let ((buf (pending-buffer p)))
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (setq pending--buffer-registry
-              (delq p pending--buffer-registry)))))
+              (delq p pending--buffer-registry))
+        (when (null pending--buffer-registry)
+          (remove-hook 'kill-buffer-hook #'pending--on-kill-buffer t)))))
   (let ((tm (pending-attached-timer p)))
     (when (timerp tm)
       (cancel-timer tm))
@@ -2390,7 +2398,9 @@ seconds."
   "Tear down `pending' global state on `unload-feature'.
 Called automatically by `unload-feature'.  Removes the
 `window-buffer-change-functions' and `kill-emacs-query-functions'
-hooks and cancels the global animation timer.  Returning nil lets
+hooks, cancels the global animation timer, and walks every live
+buffer to remove the buffer-local `kill-buffer-hook' entry our
+`pending--register' may have installed.  Returning nil lets
 `unload-feature' continue with its standard cleanup of symbols
 defined in this file."
   (remove-hook 'window-buffer-change-functions
@@ -2399,6 +2409,16 @@ defined in this file."
   (when (timerp pending--global-timer)
     (cancel-timer pending--global-timer))
   (setq pending--global-timer nil)
+  ;; Strip the buffer-local kill hook from every buffer that still
+  ;; carries it.  The check guards against the trivial common case
+  ;; where the hook was never installed; only the actual placeholder
+  ;; buffers paid the registration cost.
+  (dolist (buf (buffer-list))
+    (when (and (buffer-live-p buf)
+               (memq #'pending--on-kill-buffer
+                     (buffer-local-value 'kill-buffer-hook buf)))
+      (with-current-buffer buf
+        (remove-hook 'kill-buffer-hook #'pending--on-kill-buffer t))))
   nil)
 
 
