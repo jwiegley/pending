@@ -542,23 +542,27 @@ per resolve, since an unseen pulse is wasted CPU either way."
       (with-demoted-errors "pending--maybe-pulse: %S"
         (pulse-momentary-highlight-region start end)))))
 
-(defun pending--resolve-internal (p new-status reason new-text
-                                    &optional run-on-resolve)
+(cl-defun pending--resolve-internal (p new-status reason new-text
+                                       &optional run-on-resolve
+                                       &key no-swap)
   "Flip P from a non-terminal state to terminal NEW-STATUS with REASON.
 This is the single mutation path for terminal transitions; it
 enforces the single-resolution invariant of DESIGN.md §2.
 
 Steps:
-  1. Bail out early if `pending--in-resolve' is already set on P
+  1. Bail out early if `pending-in-resolve' is already set on P
      (re-entrant guard) or if P is already in a terminal state.
   2. Set P's status, REASON-derived reason slot, and resolved-at.
-  3. Replace the placeholder region with NEW-TEXT (plain text, no
-     face) via `pending--swap-region'.
+  3. Unless NO-SWAP, replace the placeholder region with NEW-TEXT
+     (plain text, no face) via `pending--swap-region'.  The NO-SWAP
+     branch is used by `pending-stream-finish', which has already
+     written the streamed content into the buffer and only needs the
+     bookkeeping half of the resolve.
   4. Unregister P from both registries (also cancels P's deadline
      timer if any).
   5. Delete P's overlay and clear its markers.
   6. If NEW-STATUS is `:resolved' and `pending-pulse-on-resolve' is
-     non-nil, briefly highlight the inserted text via `pulse.el'.
+     non-nil, briefly highlight the resolved text via `pulse.el'.
   7. If RUN-ON-RESOLVE is non-nil, fire P's `on-resolve' callback
      once, with errors caught so a buggy callback does not crash this
      resolver.
@@ -583,13 +587,14 @@ resolve was suppressed."
                 (pending-reason p) reason
                 (pending-resolved-at p) (float-time))
           ;; Strip animation decorations before swapping the region
-          ;; so the spinner glyph (Phase 3) does not survive into the
-          ;; resolved text.  No-op when the slot was never set.
+          ;; so the spinner glyph does not survive into the resolved
+          ;; text.  No-op when the slot was never set.
           (when (and (overlayp (pending-ov p))
                      (overlay-buffer (pending-ov p)))
             (overlay-put (pending-ov p) 'before-string nil)
             (overlay-put (pending-ov p) 'after-string nil))
-          (pending--swap-region p new-text)
+          (unless no-swap
+            (pending--swap-region p new-text))
           ;; Capture the post-swap pulse range BEFORE we clear
           ;; markers and delete the overlay.  We pulse only on
           ;; successful resolution — reject and cancel paths set
@@ -1633,14 +1638,23 @@ CHUNK must be a string; an empty string is a no-op.  Signals
 Transition P from `:streaming' to `:resolved'.  Lock the end marker
 by flipping its insertion-type back to nil, strip read-only
 properties from the streamed region (so the user can edit the
-resolved text), strip the overlay's animated decorations, delete
-the overlay, unregister P, and fire its `on-resolve' callback.
+resolved text), then route through `pending--resolve-internal' with
+the NO-SWAP flag so the buffer text already streamed in is left
+alone but the standard bookkeeping (status flip, unregister, marker
+clear, pulse, on-resolve) runs through the single mutation path.
 Mirrors gptel's finalize pattern at gptel.el:1389.
 Return t on success.
 If P is `:scheduled' or `:running' (no chunks were ever streamed),
 behave like `(pending-finish P \"\")'.
 If P is already terminal, this is a no-op and a `:debug' warning
-is logged."
+is logged.
+
+Re-entrancy note: routing through `pending--resolve-internal' makes
+a re-entrant call (e.g. from inside an `on-cancel' callback that
+ran while the placeholder is in `:cancelled' or back-to-back inside
+the same finalize) hit the in-resolve guard cleanly — the original
+terminal status wins and the second call returns nil rather than
+clobbering the reason or firing the wrong callback."
   (cond
    ((pending--terminal-status-p (pending-status p))
     (display-warning
@@ -1653,16 +1667,21 @@ is logged."
     ;; No chunks ever streamed — replace the label with the empty
     ;; string, going through the regular resolve path.
     (pending-finish p ""))
+   ((pending-in-resolve p)
+    ;; Re-entered while a resolve is already in progress on this
+    ;; placeholder (e.g. an `on-cancel' callback for a parallel
+    ;; cancel called us).  Refuse the operation; the in-flight
+    ;; resolve owns the terminal transition.
+    nil)
    (t
-    ;; In :streaming state — finalize without re-swapping the buffer
-    ;; text (it already holds the streamed content).  Buffer-mutation
-    ;; bits run inside `with-current-buffer' and are skipped if the
-    ;; buffer has died; lifecycle bookkeeping (status flip,
-    ;; unregister, marker-nil, on-resolve) ALWAYS runs so the
-    ;; placeholder cannot get stranded in `:streaming'.
-    (let ((buf (pending-buffer p))
-          (pulse-start nil)
-          (pulse-end nil))
+    ;; In :streaming state — pre-process the buffer-side bits
+    ;; (lock end marker, strip read-only on streamed text) and then
+    ;; delegate the bookkeeping half of the resolve to
+    ;; `pending--resolve-internal' via NO-SWAP so the streamed
+    ;; content stays put but the in-resolve guard, status flip,
+    ;; unregister, marker-clear, pulse, and on-resolve all run
+    ;; through the single mutation path.
+    (let ((buf (pending-buffer p)))
       (when (buffer-live-p buf)
         (with-current-buffer buf
           (set-marker-insertion-type (pending-end p) nil)
@@ -1671,10 +1690,6 @@ is logged."
                 (start (marker-position (pending-start p)))
                 (end (marker-position (pending-end p))))
             (when (and start end)
-              ;; Capture the pulse range from the streamed text now,
-              ;; before the markers are cleared below.
-              (setq pulse-start start
-                    pulse-end end)
               ;; Strip read-only and stickiness from the streamed
               ;; region so the resolved text becomes ordinary
               ;; editable text.  Streamed chunks carry no `face'
@@ -1682,41 +1697,8 @@ is logged."
               ;; preserve here.
               (remove-text-properties
                start end
-               '(read-only nil front-sticky nil rear-nonsticky nil))))
-          ;; Strip animated overlay decorations, then delete the
-          ;; overlay so the resolved text no longer carries any
-          ;; placeholder-specific properties.
-          (let ((ov (pending-ov p)))
-            (when (and (overlayp ov) (overlay-buffer ov))
-              (overlay-put ov 'before-string nil)
-              (overlay-put ov 'after-string nil)
-              (delete-overlay ov)))))
-      ;; Always run lifecycle bookkeeping, even if the buffer died.
-      (setf (pending-ov p) nil
-            (pending-status p) :resolved
-            (pending-resolved-at p) (float-time))
-      (pending--unregister p)
-      ;; Clear markers, mirroring `pending--resolve-internal'.
-      (when (markerp (pending-start p))
-        (set-marker (pending-start p) nil))
-      (when (markerp (pending-end p))
-        (set-marker (pending-end p) nil))
-      ;; Pulse-on-resolve flash — same trigger as `pending-finish'.
-      ;; No-op when buffer has died, when fps disabled by defcustom,
-      ;; or when the streamed region was empty.
-      (pending--maybe-pulse buf pulse-start pulse-end)
-      ;; Fire on-resolve safely; a buggy callback must not crash
-      ;; the finalize path.
-      (when (pending-on-resolve p)
-        (condition-case err
-            (funcall (pending-on-resolve p) p)
-          (error
-           (display-warning
-            'pending
-            (format "on-resolve callback for %s signaled: %S"
-                    (pending-id p) err)
-            :error))))
-      t))))
+               '(read-only nil front-sticky nil rear-nonsticky nil)))))))
+    (pending--resolve-internal p :resolved nil nil t :no-swap t))))
 
 
 ;;; Public API: process integration

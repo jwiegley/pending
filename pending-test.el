@@ -982,6 +982,50 @@ placeholder removed and replaced by the empty string."
           (should (string-match-p "Before:" (buffer-string)))
           (should-not (string-match-p "X" (buffer-string))))))))
 
+(ert-deftest pending-test/stream-finish-from-on-cancel-respects-guard ()
+  "Re-entrant `pending-stream-finish' from `on-cancel' must lose the race.
+A buggy `on-cancel' callback that calls `pending-stream-finish'
+mid-cancel is now routed through the single mutation path with the
+in-resolve guard set, so the original `:cancelled' transition wins
+and the second call is suppressed.  The on-resolve callback fires
+exactly once (through the cancel path's normal terminal transition,
+not the buggy stream-finish), and the cancel reason is preserved.
+
+Pre-fix: the buggy `pending-stream-finish' bypassed the guard,
+flipped status to `:resolved', clobbered the reason, and fired
+on-resolve directly — leaving the eventual `:cancelled' transition
+to be silently dropped because the placeholder was already terminal."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-stream-cancel-loop*")
+      (with-current-buffer buf
+        (let* ((on-resolve-count 0)
+               (status-at-on-resolve nil)
+               (stream-finish-result :unset)
+               (p (pending-make
+                   buf
+                   :label "X"
+                   :on-resolve
+                   (lambda (pp)
+                     (cl-incf on-resolve-count)
+                     (setq status-at-on-resolve (pending-status pp)))
+                   :on-cancel
+                   (lambda (pp)
+                     ;; Buggy callback — must be a no-op rather than
+                     ;; flipping `:cancelled' into `:resolved'.
+                     (setq stream-finish-result
+                           (pending-stream-finish pp))))))
+          (pending-stream-insert p "abc")
+          (should (eq (pending-status p) :streaming))
+          (pending-cancel p :test-reason)
+          ;; Original cancel transition wins.
+          (should (eq (pending-status p) :cancelled))
+          (should (eq (pending-reason p) :test-reason))
+          ;; Re-entrant stream-finish was suppressed (returned nil).
+          (should (null stream-finish-result))
+          ;; on-resolve fired exactly once, observing :cancelled.
+          (should (= on-resolve-count 1))
+          (should (eq status-at-on-resolve :cancelled)))))))
+
 
 ;;; Phase 7 — process integration
 
