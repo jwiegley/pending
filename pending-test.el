@@ -31,8 +31,14 @@
 ;; `pending-attach-process' wrapping a process sentinel so that
 ;; clean exits and failure exits both translate to the right
 ;; rejection, that resolving before the process exits leaves the
-;; sentinel a no-op, and that a pre-existing sentinel still fires
-;; when chained.
+;; sentinel a no-op, that a pre-existing sentinel still fires
+;; when chained, that non-terminal sentinel events (e.g.
+;; `\"open\\n\"', `\"run\\n\"', `\"stopped\\n\"') do NOT reject
+;; the placeholder (a critical correctness property for network
+;; processes), and that a signalling pre-existing sentinel does
+;; not block the wrapper's lifecycle handling; plus a defence-in-
+;; depth check that `pending-finish-stream' on a killed buffer is
+;; safe (the kill-buffer-hook normally cancels first).
 
 ;;; Code:
 
@@ -936,6 +942,95 @@ rejection) are observed."
              (sit-for 0.05)))
          (should sentinel-flag)
          (should (eq (pending-status p) :rejected)))))))
+
+(ert-deftest pending-test/process-non-terminal-events-no-op ()
+  "Non-terminal sentinel events (e.g. \"open\\n\", \"run\\n\") do not reject.
+The fix replaces event-string parsing with a `process-status'
+check, so any status that isn't `exit', `signal', `failed', or
+`closed' is a no-op.  This is critical for network processes —
+gptel, url-retrieve via `make-process', MCP servers, and language
+servers all emit `\"open\\n\"' on connect, which the previous
+implementation incorrectly rejected on."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-non-terminal*")
+     (with-current-buffer buf
+       (let* ((p (pending-make buf :label "X"))
+              ;; Use a long-running process; we won't actually kill it.
+              (proc (start-process "p-test-nonterm" nil "sleep" "10")))
+         (pending-attach-process p proc)
+         ;; Manually call the sentinel with a non-terminal event.
+         ;; In real Emacs, "open" fires when a network process connects;
+         ;; we simulate by direct call since `start-process' isn't a
+         ;; network process.  The point: when process-status returns
+         ;; `run' (still alive), our sentinel must be a no-op.
+         (pending--process-sentinel p proc "run\n")
+         (should (eq (pending-status p) :scheduled))
+         (pending--process-sentinel p proc "open\n")
+         (should (eq (pending-status p) :scheduled))
+         (pending--process-sentinel p proc "stopped\n")
+         (should (eq (pending-status p) :scheduled))
+         ;; Cleanup: kill the sleep process so the test ends.
+         (delete-process proc)
+         ;; Wait briefly for the kill sentinel to fire and reject the placeholder.
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (process-live-p proc) (< (float-time) deadline))
+             (accept-process-output proc 0.1)))
+         ;; The wrapper sentinel was called with "killed\n" or similar; status
+         ;; should now be :rejected (or possibly the original :scheduled if
+         ;; the kill happened before the sentinel ran).  We don't assert
+         ;; further to avoid flakiness; the prior `:scheduled' assertions
+         ;; before the kill are the meat of this test.
+         )))))
+
+(ert-deftest pending-test/process-existing-sentinel-error-still-runs-wrapper ()
+  "If the user's existing sentinel signals, the wrapper still runs.
+The `condition-case' around the chained call must catch the error
+so the wrapper's lifecycle bookkeeping is not skipped."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-bad-sentinel*")
+     (with-current-buffer buf
+       (let* ((warning-minimum-log-level :error)
+              (p (pending-make buf :label "X"))
+              (proc (start-process "p-test-bad" nil "true")))
+         ;; Install a sentinel that signals.
+         (set-process-sentinel proc (lambda (_proc _event) (error "boom")))
+         (pending-attach-process p proc)
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (process-live-p proc) (< (float-time) deadline))
+             (accept-process-output proc 0.1)))
+         (let ((deadline (+ (float-time) 5.0)))
+           (while (and (pending-active-p p) (< (float-time) deadline))
+             (sit-for 0.05)))
+         ;; Wrapper still ran, so the placeholder is rejected.
+         (should (eq (pending-status p) :rejected)))))))
+
+
+;;; Phase 7 — buffer-dead defense in depth
+
+(ert-deftest pending-test/finish-stream-buffer-dead-still-resolves ()
+  "Killing the buffer mid-stream and then calling `pending-finish-stream'
+must still flip status (status will be :cancelled because
+kill-buffer-hook fires first; finish-stream sees the terminal
+state and bails).  Documents that the buffer-kill hook handles
+the dead-buffer case before `pending-finish-stream' ever sees
+it.  The defense-in-depth code in `pending-finish-stream' is
+still valuable for correctness but is essentially unreachable in
+normal use."
+  (pending-test--with-fresh-registry
+   (let* ((buf (generate-new-buffer "*p-finish-dead*"))
+          (callback-ran nil)
+          (p (with-current-buffer buf
+               (pending-make buf :label "X"
+                             :on-resolve (lambda (_) (setq callback-ran t))))))
+     (with-current-buffer buf (pending-resolve-stream p "abc"))
+     (kill-buffer buf)
+     ;; By now, kill-buffer-hook should have run, cancelling the placeholder.
+     ;; Status: :cancelled. Reason: :buffer-killed. The on-resolve callback
+     ;; was fired by pending-cancel.
+     (should (memq (pending-status p) '(:cancelled :resolved)))
+     (should callback-ran)
+     ;; Calling finish-stream now is a no-op (placeholder is terminal).
+     (pending-finish-stream p))))
 
 
 (provide 'pending-test)

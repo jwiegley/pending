@@ -1176,37 +1176,43 @@ is logged."
 
 ;;; Public API: process integration
 
-(defun pending--process-sentinel (p _proc event)
-  "Internal sentinel translating PROCESS lifecycle EVENT into a transition.
-P is the pending struct attached to the process; EVENT is the
-standard sentinel event string — `\"finished\\n\"', `\"exited
-abnormally with code N\\n\"', `\"killed\\n\"', etc.
-If P is already terminal this is a no-op (the single-resolution
-guard inside `pending-reject' would also make it a no-op, but we
-skip the work explicitly).
-Otherwise:
-  - On a clean `\"finished\"' event, reject with the reason
-    `\"process exited without resolving\"' — the process completed
-    but the caller never explicitly resolved P.
-  - On any failure event (`\"exited abnormally\"', `\"killed\"',
-    `\"broken pipe\"', or any other non-empty event), reject with
-    `\"process: TRIMMED-EVENT\"'."
+(defun pending--process-sentinel (p proc _event)
+  "Internal sentinel handling PROCESS lifecycle for pending P.
+Reads the live process state via `process-status':
+
+  exit, signal, closed, failed -> the process is dead.  If P is
+  still active and exit was clean, reject with \"process exited
+  without resolving\".  Otherwise reject with the status symbol.
+
+  run, open, stop, listen, connect -> the process is alive (or
+  resuming).  No-op.
+
+The kernel-level status is authoritative — the EVENT string is
+localized and varies across process types, but `process-status'
+is a documented C-API symbol.  Notably this means non-terminal
+events such as `\"open\\n\"' (network connect), `\"run\\n\"'
+(resumed from stop), and `\"stopped\\n\"' (SIGSTOP/SIGTSTP) are
+correctly treated as no-ops."
   (when (pending-active-p p)
-    (let ((trimmed (string-trim event)))
-      (cond
-       ((string-prefix-p "finished" event)
-        ;; Clean process exit but no explicit resolve from caller.
-        (pending-reject p "process exited without resolving"))
-       ((or (string-prefix-p "exited abnormally" event)
-            (string-prefix-p "killed" event)
-            (string-prefix-p "broken pipe" event)
-            ;; Anything else non-empty — open vs deletion notices,
-            ;; \"failed\", whatever.  The empty-event guard avoids
-            ;; rejecting on the harmless `\"open\\n\"' sentinel calls
-            ;; that some process types emit.
-            (and (not (string-empty-p trimmed))
-                 (not (string-prefix-p "finished" event))))
-        (pending-reject p (format "process: %s" trimmed)))))))
+    (let ((status (process-status proc)))
+      (pcase status
+        ('exit
+         ;; Clean exit but no explicit resolve.
+         (let ((code (process-exit-status proc)))
+           (if (zerop code)
+               (pending-reject p "process exited without resolving")
+             (pending-reject p (format "process: exited with code %d" code)))))
+        ('signal
+         ;; Killed by a signal.  process-exit-status returns the signal number.
+         (pending-reject p (format "process: killed (signal %d)"
+                                   (process-exit-status proc))))
+        ('failed
+         (pending-reject p "process: failed"))
+        ('closed
+         ;; Network process: peer closed the connection.
+         (pending-reject p "process: connection closed"))
+        ;; Any other status (run, open, stop, listen, connect) — alive.
+        (_ nil)))))
 
 (defun pending-attach-process (p process)
   "Wire PROCESS so that its death rejects P appropriately.
@@ -1218,13 +1224,18 @@ FIRST, then a wrapper handles automatic state transitions.  Errors
 signalled from the existing sentinel are caught and reported as
 `pending' warnings so a buggy caller-installed sentinel does not
 prevent the wrapper's lifecycle handling.
-Lifecycle handling (in the wrapper):
-  - `\"finished\"' (clean exit) — if P is still active, reject with
+Lifecycle handling (in the wrapper) consults `process-status', not
+the event string, so it is robust against localization and works
+correctly for non-terminal events such as `\"open\\n\"' (network
+connect), `\"run\\n\"' (resumed), and `\"stopped\\n\"' (suspended):
+  - `exit' status with code 0 — if P is still active, reject with
     \"process exited without resolving\".  This represents a
     process that ran to completion but the caller did not call
     `pending-resolve' on P explicitly.
-  - `\"exited abnormally\"', `\"killed\"', `\"broken pipe\"', and
-    other failure modes — reject with the trimmed event string.
+  - `exit' with non-zero code, `signal', `failed', or `closed' —
+    reject with a `\"process: ...\"' reason describing the cause.
+  - Any live status (`run', `open', `stop', `listen', `connect') —
+    no-op; the placeholder remains active.
 If multiple processes are attached over P's lifetime, the LAST
 attach wins for the `attached-process' slot, but each prior
 process's wrapper sentinel still chains through to its predecessor
