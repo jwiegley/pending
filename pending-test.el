@@ -1434,6 +1434,110 @@ at `pending-list' time and stays stale until a manual `g'."
       (when (get-buffer "*Pending*") (kill-buffer "*Pending*")))))
 
 
+;;; v0.2 — pulse-on-resolve
+
+(ert-deftest pending-test/pulse-on-resolve-fires ()
+  "`pending-finish' invokes `pulse-momentary-highlight-region' on the resolved range.
+The pulse covers the buffer span [start, start+len(text)] so the
+flash hits exactly the inserted text."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-pulse-1*")
+      (with-current-buffer buf
+        (let* ((calls nil)
+               (pending-pulse-on-resolve t))
+          ;; Force the visible-window gate open so `pending--maybe-pulse'
+          ;; fires under batch.
+          (cl-letf (((symbol-function 'pulse-momentary-highlight-region)
+                     (lambda (s e &rest _) (push (cons s e) calls)))
+                    ((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) t)))
+            (let ((p (pending-make buf :label "X")))
+              (pending-finish p "DONE")))
+          (should (= 1 (length calls)))
+          (let ((range (car calls)))
+            (should (= 1 (car range)))
+            (should (= 5 (cdr range)))))))))
+
+(ert-deftest pending-test/pulse-not-on-cancel ()
+  "Cancel does not pulse — pulses signal successful completion only."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-pulse-2*")
+      (with-current-buffer buf
+        (let* ((calls nil)
+               (pending-pulse-on-resolve t))
+          (cl-letf (((symbol-function 'pulse-momentary-highlight-region)
+                     (lambda (s e &rest _) (push (cons s e) calls)))
+                    ((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) t)))
+            (let ((p (pending-make buf :label "X")))
+              (pending-cancel p)))
+          (should (= 0 (length calls))))))))
+
+(ert-deftest pending-test/pulse-not-on-reject ()
+  "Reject does not pulse — pulses signal successful completion only."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-pulse-reject*")
+      (with-current-buffer buf
+        (let* ((calls nil)
+               (pending-pulse-on-resolve t))
+          (cl-letf (((symbol-function 'pulse-momentary-highlight-region)
+                     (lambda (s e &rest _) (push (cons s e) calls)))
+                    ((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) t)))
+            (let ((p (pending-make buf :label "X")))
+              (pending-reject p "boom")))
+          (should (= 0 (length calls))))))))
+
+(ert-deftest pending-test/pulse-disabled-by-defcustom ()
+  "`pending-pulse-on-resolve' nil disables pulsing."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-pulse-3*")
+      (with-current-buffer buf
+        (let* ((calls nil)
+               (pending-pulse-on-resolve nil))
+          (cl-letf (((symbol-function 'pulse-momentary-highlight-region)
+                     (lambda (s e &rest _) (push (cons s e) calls)))
+                    ((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) t)))
+            (let ((p (pending-make buf :label "X")))
+              (pending-finish p "DONE")))
+          (should (= 0 (length calls))))))))
+
+(ert-deftest pending-test/pulse-on-stream-finish ()
+  "`pending-stream-finish' pulses the streamed region on `:resolved'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-pulse-stream*")
+      (with-current-buffer buf
+        (let* ((calls nil)
+               (pending-pulse-on-resolve t))
+          (cl-letf (((symbol-function 'pulse-momentary-highlight-region)
+                     (lambda (s e &rest _) (push (cons s e) calls)))
+                    ((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) t)))
+            (let ((p (pending-make buf :label "X")))
+              (pending-stream-insert p "hello")
+              (pending-stream-finish p)))
+          (should (= 1 (length calls)))
+          (let ((range (car calls)))
+            (should (= 1 (car range)))
+            (should (= 6 (cdr range)))))))))
+
+(ert-deftest pending-test/pulse-skipped-when-buffer-not-visible ()
+  "No pulse when BUFFER has no window — flash on hidden buffer is waste."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-pulse-hidden*")
+      (with-current-buffer buf
+        (let* ((calls nil)
+               (pending-pulse-on-resolve t))
+          ;; Default: no window for `buf'.  Stub leaves the gate
+          ;; closed.
+          (cl-letf (((symbol-function 'pulse-momentary-highlight-region)
+                     (lambda (s e &rest _) (push (cons s e) calls))))
+            (let ((p (pending-make buf :label "X")))
+              (pending-finish p "DONE")))
+          (should (= 0 (length calls))))))))
+
+
 (provide 'pending-test)
 
 ;;; pending-test.el ends here

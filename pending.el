@@ -210,6 +210,20 @@ where the list view is a snapshot until manually refreshed."
   :group 'pending
   :package-version '(pending . "0.2.0"))
 
+(defcustom pending-pulse-on-resolve t
+  "If non-nil, flash the resolved region briefly via `pulse.el'.
+On a successful `:resolved' transition (`pending-finish' or
+`pending-stream-finish') the inserted text is momentarily
+highlighted using `pulse-momentary-highlight-region'.  Reject
+and cancel paths never pulse — they reflect failure or
+abandonment, not a successful completion.
+
+`pulse' is loaded lazily the first time a pulse fires so this
+option does not pull the library in for users who set it nil."
+  :type 'boolean
+  :group 'pending
+  :package-version '(pending . "0.2.0"))
+
 
 ;;; Faces
 
@@ -451,6 +465,36 @@ inserted text."
               (insert (or new-text ""))
               (set-marker (pending-end p) (point)))))))))
 
+(defun pending--maybe-pulse (buffer start end)
+  "Briefly highlight BUFFER's region [START, END] via `pulse.el'.
+No-op when `pending-pulse-on-resolve' is nil, when `pulse' is
+unavailable (require fails), when BUFFER is dead, when BUFFER has no
+visible window (a flash on an off-screen buffer is wasted work), or
+when START or END is nil or START >= END.
+
+`pulse' is loaded lazily here so disabling the feature avoids the
+library load entirely.  When `pulse-momentary-highlight-region' is
+already `fboundp' the require call is skipped — this lets tests
+substitute the function via `cl-letf' without our `require' load
+overwriting the substitution from underneath them.
+
+The visibility gate uses the cheap (selected frame only) variant
+of `get-buffer-window' rather than the cross-frame `\\='visible'
+form.  A buffer that resolves on an off-screen frame thus does not
+pulse — that is the right tradeoff for a hot path that runs once
+per resolve, since an unseen pulse is wasted CPU either way."
+  (when (and pending-pulse-on-resolve
+             (buffer-live-p buffer)
+             (integerp start)
+             (integerp end)
+             (< start end)
+             (get-buffer-window buffer)
+             (or (fboundp 'pulse-momentary-highlight-region)
+                 (require 'pulse nil 'noerror)))
+    (with-current-buffer buffer
+      (with-demoted-errors "pending--maybe-pulse: %S"
+        (pulse-momentary-highlight-region start end)))))
+
 (defun pending--resolve-internal (p new-status reason new-text
                                     &optional run-on-resolve)
   "Flip P from a non-terminal state to terminal NEW-STATUS with REASON.
@@ -466,7 +510,9 @@ Steps:
   4. Unregister P from both registries (also cancels P's deadline
      timer if any).
   5. Delete P's overlay and clear its markers.
-  6. If RUN-ON-RESOLVE is non-nil, fire P's `on-resolve' callback
+  6. If NEW-STATUS is `:resolved' and `pending-pulse-on-resolve' is
+     non-nil, briefly highlight the inserted text via `pulse.el'.
+  7. If RUN-ON-RESOLVE is non-nil, fire P's `on-resolve' callback
      once, with errors caught so a buggy callback does not crash this
      resolver.
 
@@ -497,15 +543,30 @@ resolve was suppressed."
             (overlay-put (pending-ov p) 'before-string nil)
             (overlay-put (pending-ov p) 'after-string nil))
           (pending--swap-region p new-text)
-          (pending--unregister p)
-          (let ((ov (pending-ov p)))
-            (when (overlayp ov)
-              (delete-overlay ov))
-            (setf (pending-ov p) nil))
-          (let ((sm (pending-start p))
-                (em (pending-end p)))
-            (when (markerp sm) (set-marker sm nil))
-            (when (markerp em) (set-marker em nil)))
+          ;; Capture the post-swap pulse range BEFORE we clear
+          ;; markers and delete the overlay.  We pulse only on
+          ;; successful resolution — reject and cancel paths set
+          ;; new-status to `:rejected' or `:cancelled' and do not
+          ;; trigger the flash.
+          (let ((pulse-buf (and (eq new-status :resolved)
+                                (pending-buffer p)))
+                (pulse-start (and (eq new-status :resolved)
+                                  (markerp (pending-start p))
+                                  (marker-position (pending-start p))))
+                (pulse-end (and (eq new-status :resolved)
+                                (markerp (pending-end p))
+                                (marker-position (pending-end p)))))
+            (pending--unregister p)
+            (let ((ov (pending-ov p)))
+              (when (overlayp ov)
+                (delete-overlay ov))
+              (setf (pending-ov p) nil))
+            (let ((sm (pending-start p))
+                  (em (pending-end p)))
+              (when (markerp sm) (set-marker sm nil))
+              (when (markerp em) (set-marker em nil)))
+            (when (eq new-status :resolved)
+              (pending--maybe-pulse pulse-buf pulse-start pulse-end)))
           (when (and run-on-resolve (pending-on-resolve p))
             (condition-case err
                 (funcall (pending-on-resolve p) p)
@@ -1414,7 +1475,9 @@ is logged."
     ;; buffer has died; lifecycle bookkeeping (status flip,
     ;; unregister, marker-nil, on-resolve) ALWAYS runs so the
     ;; placeholder cannot get stranded in `:streaming'.
-    (let ((buf (pending-buffer p)))
+    (let ((buf (pending-buffer p))
+          (pulse-start nil)
+          (pulse-end nil))
       (when (buffer-live-p buf)
         (with-current-buffer buf
           (set-marker-insertion-type (pending-end p) nil)
@@ -1423,6 +1486,10 @@ is logged."
                 (start (marker-position (pending-start p)))
                 (end (marker-position (pending-end p))))
             (when (and start end)
+              ;; Capture the pulse range from the streamed text now,
+              ;; before the markers are cleared below.
+              (setq pulse-start start
+                    pulse-end end)
               ;; Strip read-only and stickiness from the streamed
               ;; region so the resolved text becomes ordinary
               ;; editable text.  Streamed chunks carry no `face'
@@ -1449,6 +1516,10 @@ is logged."
         (set-marker (pending-start p) nil))
       (when (markerp (pending-end p))
         (set-marker (pending-end p) nil))
+      ;; Pulse-on-resolve flash — same trigger as `pending-finish'.
+      ;; No-op when buffer has died, when fps disabled by defcustom,
+      ;; or when the streamed region was empty.
+      (pending--maybe-pulse buf pulse-start pulse-end)
       ;; Fire on-resolve safely; a buggy callback must not crash
       ;; the finalize path.
       (when (pending-on-resolve p)
