@@ -1,10 +1,18 @@
 # pending
 
-A standalone Emacs Lisp library for marking buffer regions whose
-content will arrive asynchronously. Insert a colored placeholder where
-some asynchronously computed text is going to appear, optionally with
-a spinner or progress bar, then atomically replace it with the result
-when ready.
+I've been using `gptel` heavily for a while now, and one thing keeps
+bothering me: the moment I send a request, the buffer just sits there.
+No indication that anything's happening, no marker for *where* the
+answer will land. If I then go edit somewhere else and the response
+comes back, sometimes it lands in the wrong place. Sometimes I forget
+I asked anything at all.
+
+So I wrote `pending`. It marks a region (or a single point) as "the
+answer goes here, hold tight," shows a small animated lighter while the
+async work runs, and then atomically swaps the placeholder for the
+result. One undo step. The placeholder text is read-only while it's
+in flight, so I can't accidentally type into it. If I delete it, the
+underlying request gets cancelled too.
 
 ```text
 Calling Claude  ⠋ [████████░░░░░░░░] 47%
@@ -15,9 +23,8 @@ Calling Claude  ⠋ [████████░░░░░░░░] 47%
 ## At a glance
 
 ```elisp
-;; Mark the current point as "we'll fill this in shortly", kick off
-;; gptel, and let the placeholder live in the buffer until the
-;; response comes back.
+;; Mark point as "we'll fill this in shortly," kick off gptel, let
+;; the placeholder sit in the buffer until the response comes back.
 
 (let ((tok (pending-insert (point) "Calling Claude")))
   (gptel-request "Tell me a joke."
@@ -27,45 +34,49 @@ Calling Claude  ⠋ [████████░░░░░░░░] 47%
                  (pending-cancel tok)))))
 ```
 
-While the request is in flight, the buffer shows a bold red
-`Calling Claude` lighter at point. A spinner animates beside it. When
-the callback fires, the lighter and spinner disappear and the
-response text takes their place — atomically, undoably as one step.
+While the request is in flight, a bold red `Calling Claude` lighter
+sits at point. A spinner animates beside it. When the callback fires,
+the lighter and spinner go away and the response text takes their
+place. Everything happens as one undo step.
 
-## Why pending?
+## Why I wrote it
 
-- **Visible async**: users see immediately *where* the answer will land
-  and *that* something is happening. No silent five-second wait while
-  staring at a static buffer.
-- **Atomic resolution**: the swap from placeholder to result is one
-  undo step. No torn intermediate states.
-- **Edit-survival**: while pending, the placeholder text is read-only.
-  Surrounding edits adjust the placeholder's markers automatically; if
-  the user deletes the region outright, the placeholder cancels itself.
-- **Backend-agnostic**: works with `gptel`, `make-process`,
-  `url-retrieve`, plain timers, or any callback-driven async pattern.
-- **One global timer**: regardless of how many concurrent placeholders
-  are active, a single 10 fps timer drives the animation.
+A few things weren't working for me:
+
+- **Visible async**: I want to see *where* the answer will land and
+  *that* something is happening. No silent five-second wait staring
+  at a static buffer.
+- **Atomic swap**: replacement is one undo step. No torn intermediate
+  states where half the response is in the buffer and half isn't.
+- **Edit-survival**: while pending, the placeholder body is read-only.
+  Edits before and after adjust the placeholder's markers
+  automatically. If I do delete the region outright, the placeholder
+  cancels itself.
+- **Backend-agnostic**: it doesn't know or care about gptel. Works
+  with `make-process`, `url-retrieve`, plain timers — anything
+  callback-driven.
+- **One global timer**: ten frames per second, single timer, walks
+  the registry once per tick. N pending regions don't mean N timers.
 
 ## Installation
 
-`pending` requires Emacs 27.1 or newer and has no third-party runtime
+`pending` needs Emacs 27.1 or newer. No third-party runtime
 dependencies.
 
-### Via `package-vc-install` from GitHub
+### `package-vc-install` from GitHub
 
 ```elisp
 (package-vc-install
  '(pending :url "https://github.com/jwiegley/pending"))
 ```
 
-### Via `package-vc-install` from a local checkout
+### `package-vc-install` from a local checkout
 
 ```elisp
 (package-vc-install-from-checkout "/path/to/pending" "pending")
 ```
 
-### Via `use-package`
+### `use-package`
 
 ```elisp
 (use-package pending
@@ -104,10 +115,10 @@ Drop `pending.el` somewhere on `load-path` and `(require 'pending)`.
 
 ### Cancel from point
 
-Place the cursor on a placeholder and run `M-x pending-cancel-at-point`
-(also bound to `RET` and `mouse-1` over the placeholder).
+Move point onto a placeholder and run `M-x pending-cancel-at-point`.
+It's also bound to `RET` and `mouse-1` over the placeholder.
 
-### Show the lighter mode
+### Show the lighter
 
 ```elisp
 M-x global-pending-lighter-mode
@@ -116,59 +127,59 @@ M-x global-pending-lighter-mode
 The mode-line gains a small `[N⏳~Ks]` summary while any placeholders
 are active. Click it to open `M-x pending-list`.
 
-## Core concepts
+## Concepts
 
 ### Tokens
 
 Every constructor returns a *token* — a `pending` struct used as a
-handle for the placeholder. Pass the token to `pending-resolve`,
-`pending-cancel`, `pending-update`, and friends to operate on the
-placeholder. Tokens are valid until they reach a terminal state
-(`:resolved`, `:rejected`, `:cancelled`, `:expired`); after that, all
-operations are no-ops with a `:debug` warning.
+handle. Pass it to `pending-resolve`, `pending-cancel`,
+`pending-update`, and friends. Tokens are valid until they hit a
+terminal state (`:resolved`, `:rejected`, `:cancelled`, `:expired`);
+after that, all operations are no-ops (with a `:debug` warning, so
+you can spot accidental late calls).
 
-### The pending registry
+### The registry
 
-All active placeholders are recorded in a global registry. Snapshot
-it with `pending-alist` (returns `((ID . STRUCT) ...)`) or filter it
-with `pending-list-active` (which honours `:buffer` and `:group`
-filters). The registry is also the data source for `M-x pending-list`
-and the mode-line lighter.
+All active placeholders live in a global registry. Snapshot it with
+`pending-alist` (returns `((ID . STRUCT) ...)`) or filter it with
+`pending-list-active` (which honours `:buffer` and `:group`). The
+registry also feeds `M-x pending-list` and the mode-line lighter.
 
 ### Lighter vs region highlight
 
-The library distinguishes two visual treatments for placeholders:
+There are two visual treatments, and I keep them distinct:
 
-- **Region highlight** — when the overlay covers existing buffer text
-  (adopt mode `pending-overlay BEG END STR` with `BEG < END`), the
-  overlay carries `pending-highlight` as its `face` property so the
-  user can see *which* characters the asynchronous change will
-  rewrite. In insert mode and zero-width adopt mode the overlay has
-  no face — there is no pre-existing region to highlight.
+- **Region highlight** — when the overlay covers existing buffer
+  text (adopt mode `pending-overlay BEG END STR` with `BEG < END`),
+  the overlay carries `pending-highlight` as its `face`. That's so
+  the user can see *which* characters the async work will rewrite.
+  In insert mode and zero-width adopt mode, the overlay has no face
+  — there's no pre-existing region to highlight.
 - **Lighter** — a small bold badge (face `pending-lighter`) attached
   to the overlay's `before-string`. This is the prominent visual
-  marker that draws the eye.
+  marker.
 
 The simple API uses a static lighter (`:lighter` indicator). The rich
 API can substitute an animated spinner, a determinate bar, or an ETA
 bar in place of the static lighter.
 
-The library NEVER applies a `face` text property to text it inserts
-itself: labels, streamed chunks, and resolution / rejection /
+The library never adds a `face` text property to text it inserts
+itself. Labels, streamed chunks, and resolution / rejection /
 cancellation replacement text all land in the buffer as plain text,
 so the surrounding font-lock and major-mode faces apply normally.
 Only the overlay (in adopt mode with a non-empty range) and the
 overlay's `before-string` lighter / `after-string` progress bar are
-faced.
+faced. This was a deliberate decision: I don't want a generic library
+fighting with the user's syntax highlighting.
 
 ### Read-only protection
 
-While a placeholder is active, its inserted text is read-only via text
-properties (`read-only t`, `front-sticky '(read-only)`, and
-`rear-nonsticky '(read-only)`). The user can edit before and after the
-placeholder freely, but cannot edit the placeholder body. The library
-binds `inhibit-read-only` during its own operations so internal
-swaps still work.
+While a placeholder is active, its inserted text is read-only via
+text properties (`read-only t`, `front-sticky '(read-only)`,
+`rear-nonsticky '(read-only)`). The user can edit before and after
+freely, but can't edit the body. The library binds
+`inhibit-read-only` during its own operations so the internal swaps
+still work.
 
 In *adopt mode* (`pending-make` with explicit `:start` and `:end`),
 the library does *not* retroactively add read-only properties — the
@@ -177,24 +188,23 @@ during streaming, all inserted text is protected.
 
 ### Auto-cancellation paths
 
-Several edge conditions auto-cancel an in-flight placeholder so it
-cannot strand state:
+A few edge conditions auto-cancel an in-flight placeholder so it
+can't strand state:
 
 - **Region deletion** — if the user deletes the entire placeholder
   region, the overlay collapses to zero length and a
   `modification-hook` cancels with reason `:region-deleted`.
-- **Buffer kill** — `kill-buffer-hook` iterates the buffer's
-  pending registry and cancels each with reason `:buffer-killed`.
-- **Deadline** — when `pending-make` is called with `:deadline N`, a
-  one-shot timer fires `pending-reject` with reason `:timed-out` if
-  the placeholder is still active after `N` seconds.
+- **Buffer kill** — `kill-buffer-hook` walks the buffer's pending
+  registry and cancels each one with reason `:buffer-killed`.
+- **Deadline** — when `pending-make` is called with `:deadline N`,
+  a one-shot timer fires `pending-reject` with `:timed-out` if the
+  placeholder is still active after `N` seconds.
 - **Process death** — `pending-attach-process` wraps the process
-  sentinel; if the process dies non-cleanly (or cleanly without an
-  explicit resolve), the placeholder is rejected with a reason
-  derived from `process-status`.
-- **Emacs exit** — when `pending-confirm-on-emacs-exit` is non-nil and
-  active placeholders exist, `kill-emacs-query-functions` prompts
-  before exit.
+  sentinel; non-clean exit (or clean exit without an explicit
+  resolve) rejects with a reason derived from `process-status`.
+- **Emacs exit** — when `pending-confirm-on-emacs-exit` is non-nil
+  and active placeholders exist, `kill-emacs-query-functions`
+  prompts before exit.
 
 ## The simple API
 
@@ -206,17 +216,16 @@ cannot strand state:
 ```
 
 Mark the region `[BEG, END]` in the current buffer as pending an
-asynchronous change. When `BEG < END`, the overlay covers existing
-buffer text and is faced with `pending-highlight` so the user can see
-which characters the asynchronous change will rewrite (the underlying
-buffer text is untouched — only the overlay carries a face). `STR`
-shows as a lighter badge at `BEG` via the overlay's `before-string`.
+async change. When `BEG < END`, the overlay covers existing buffer
+text and is faced with `pending-highlight` (the underlying buffer
+text is untouched — only the overlay carries a face). `STR` shows
+as a lighter badge at `BEG` via the overlay's `before-string`.
 Returns a token.
 
-If `BEG` equals `END`, the region is empty and only the lighter shows
-— equivalent to `pending-insert`. In that case the overlay carries no
-face. The 1-arg form returns the token's overlay (back-compat with
-the auto-generated accessor name).
+If `BEG` equals `END`, the region is empty and only the lighter
+shows — equivalent to `pending-insert`. In that case the overlay
+carries no face. The 1-arg form returns the token's overlay
+(back-compat with the auto-generated accessor name).
 
 ```elisp
 (let ((tok (pending-overlay (region-beginning) (region-end)
@@ -252,11 +261,10 @@ terminal state.
 ### `pending-cancel TOKEN &optional REASON`
 
 Cancel `TOKEN`. Calls the placeholder's `:on-cancel` callback first
-(so the caller can abort underlying work — e.g. kill a process), then
-replaces the region with a small cancelled glyph (`✗ REASON`). The
-inserted glyph is plain text — no `face` property is applied; the
-surrounding font-lock applies normally. Default `REASON` is
-`:cancelled-by-user`.
+(so the caller can abort underlying work — kill a process, abort a
+gptel request), then replaces the region with a small cancelled
+glyph (`✗ REASON`). The inserted glyph is plain text — no `face` is
+applied. Default `REASON` is `:cancelled-by-user`.
 
 ```elisp
 (pending-cancel tok)              ; cancelled-by-user
@@ -265,7 +273,7 @@ surrounding font-lock applies normally. Default `REASON` is
 
 ### `pending-goto TOKEN`
 
-Move point to `TOKEN`'s start position. Switches to its buffer if
+Move point to `TOKEN`'s start position, switching buffers if
 necessary. Interactively, prompts via `completing-read` over the
 registered placeholders.
 
@@ -277,8 +285,8 @@ M-x pending-goto RET <pick from list> RET
 
 Interactive command. Opens the `*Pending*` tabulated-list buffer
 showing every registered placeholder. Columns: ID, Buffer, Label,
-Status, Elapsed, ETA, Group. Bindings: `g` refresh, `RET` jump, `c`
-cancel, `q` quit.
+Status, Elapsed, ETA, Group. Bindings: `g` refresh, `RET` jump,
+`c` cancel, `q` quit.
 
 ### `pending-alist`
 
@@ -293,8 +301,8 @@ Useful for programmatic queries.
 
 ### `pending-cancel-at-point`
 
-Interactive command. Cancel the placeholder under point. Bound to
-`RET` and `mouse-1` over a placeholder by `pending-overlay-map`.
+Interactive. Cancel the placeholder under point. Bound to `RET` and
+`mouse-1` over a placeholder by `pending-overlay-map`.
 
 ## The rich API
 
@@ -327,11 +335,11 @@ Keyword reference:
 
 Insert mode vs adopt mode:
 
-- **Insert mode** (no `:start`/`:end`) — inserts a new placeholder at
-  point in `BUFFER`. The label text is propertized read-only.
-- **Adopt mode** (both `:start` and `:end`) — takes over the existing
-  region without inserting text. The caller owns the text and is
-  responsible for read-only protection.
+- **Insert mode** (no `:start`/`:end`) — inserts a new placeholder
+  at point in `BUFFER`. The label text is propertized read-only.
+- **Adopt mode** (both `:start` and `:end`) — takes over the
+  existing region without inserting text. The caller owns the text
+  and is responsible for read-only protection.
 
 ```elisp
 (pending-make (current-buffer)
@@ -343,7 +351,7 @@ Insert mode vs adopt mode:
 ### `pending-update P &key label percent eta indicator`
 
 Mutate slots mid-flight without changing state. Useful when the
-caller learns more about progress — e.g. switch from `:spinner` to
+caller learns more about progress — switch from `:spinner` to
 `:percent` once the total work size is known.
 
 ```elisp
@@ -358,9 +366,9 @@ the loading label and transitions to `:streaming`; subsequent chunks
 append at the end marker (which has insertion-type `t` while
 streaming, so it advances with the insert).
 
-The streamed text is read-only while streaming, but carries no `face`
-property — the buffer's normal font-lock applies. Animation continues
-uninterrupted during streaming.
+The streamed text is read-only while streaming, but carries no
+`face` — the buffer's normal font-lock applies. Animation continues
+uninterrupted.
 
 ```elisp
 (pending-resolve-stream tok "Once upon a time, ")
@@ -369,23 +377,23 @@ uninterrupted during streaming.
 
 ### `pending-finish-stream P`
 
-Finalize a streamed placeholder: flip the end marker's insertion-type
-back to nil, strip read-only properties, remove the overlay, and fire
-`:on-resolve`. The buffer text is left as-is (it already holds the
-streamed content).
+Finalize a streamed placeholder: flip the end marker's
+insertion-type back to nil, strip read-only properties, remove the
+overlay, fire `:on-resolve`. The buffer text is left as-is (it
+already holds the streamed content).
 
 ```elisp
 (pending-finish-stream tok)
 ```
 
-If `P` never received a chunk (status is `:scheduled` or `:running`),
-this is equivalent to `(pending-resolve P "")`.
+If `P` never received a chunk (status is `:scheduled` or
+`:running`), this is equivalent to `(pending-resolve P "")`.
 
 ### `pending-reject P REASON &optional REPLACEMENT-TEXT`
 
-Mark `P` as failed. `REASON` is a string or symbol. `REPLACEMENT-TEXT`
-defaults to `"✗ REASON"`. The inserted text is plain — no `face`
-property is applied; surrounding font-lock applies normally.
+Mark `P` as failed. `REASON` is a string or symbol.
+`REPLACEMENT-TEXT` defaults to `"✗ REASON"`. Plain text — no `face`
+applied; surrounding font-lock applies normally.
 
 ```elisp
 (pending-reject tok "API rate limit exceeded")
@@ -398,7 +406,8 @@ Wire `PROCESS` so its death rejects `P` automatically. Wraps the
 process sentinel; any caller-installed sentinel runs first, then a
 wrapper inspects `process-status` and calls `pending-reject` on
 non-clean exit. The reason is derived from the live process status,
-which is robust against localized event strings.
+which is robust against localized event strings (so the test still
+works in a non-English locale).
 
 ```elisp
 (let ((proc (start-process "build" nil "make")))
@@ -407,8 +416,8 @@ which is robust against localized event strings.
 
 ### `pending-active-p P`
 
-Returns non-nil if `P` is in an active (non-terminal) state:
-`:scheduled`, `:running`, or `:streaming`.
+Non-nil if `P` is in an active state: `:scheduled`, `:running`, or
+`:streaming`.
 
 ### `pending-status P`
 
@@ -421,7 +430,7 @@ Returns the pending struct at `POS` (default point) in `BUFFER`
 
 ## Indicator modes
 
-Choose a visual via `:indicator` to `pending-make`. The simple
+Pick a visual via `:indicator` to `pending-make`. The simple
 positional API always uses `:lighter`; the rich API defaults to
 `:spinner`.
 
@@ -432,7 +441,7 @@ positional API always uses `:lighter`; the rich API defaults to
 | `:eta`      | Spinner glyph + bar + remaining-seconds estimate.       | Caller has a rough guess at total wall-clock seconds.    |
 | `:lighter`  | Static badge (`pending-lighter` face). No animation.    | Visual marker only; no progress to convey.               |
 
-Visual examples (terminal renderings):
+What it looks like (terminal):
 
 ```text
 :spinner    Calling Claude  ⠋
@@ -443,8 +452,9 @@ Visual examples (terminal renderings):
 
 `:eta` uses a piecewise-asymptotic formula that hits 80% at
 `t = 0.8 × ETA`, 95% at `t = ETA`, and saturates toward (but never
-reaches) 100% past the deadline. This avoids the "100% but still
-working" effect that bothers users.
+reaches) 100% past the deadline. That's deliberate — I find the
+"100% but still working" effect actively annoying, so I designed
+this one to never hit 100% until it actually finishes.
 
 ## Integration recipes
 
@@ -533,7 +543,7 @@ working" effect that bothers users.
     p))
 ```
 
-### Pure-delay timer (for tests/demos)
+### Pure-delay timer (tests/demos)
 
 ```elisp
 (defun my/delay-pending (seconds text)
@@ -562,8 +572,8 @@ CALLBACK is called with the token; it must arrange to call
 
 ## Mode-line lighter
 
-`global-pending-lighter-mode` is a global minor mode. When enabled, it
-appends a small construct to `global-mode-string` that displays:
+`global-pending-lighter-mode` is a global minor mode. Enable it and
+a small construct gets appended to `global-mode-string`:
 
 ```text
  [3⏳~5s]
@@ -571,7 +581,7 @@ appends a small construct to `global-mode-string` that displays:
 
 — meaning *3 active placeholders; the smallest remaining ETA across
 them is approximately 5 seconds*. When no placeholder has an ETA in
-the future, the trailing tilde-segment is omitted: `[3⏳]`. When no
+the future, the trailing tilde-segment goes away: `[3⏳]`. When no
 placeholders are active, the lighter is hidden entirely.
 
 The lighter is propertized with `pending-spinner-face`, carries a
@@ -584,7 +594,7 @@ opens the list buffer.
 
 ## The `*Pending*` buffer
 
-`M-x pending-list` opens a tabulated-list view with one row per
+`M-x pending-list` opens a tabulated-list view, one row per
 registered placeholder.
 
 | Column   | Width | Sort | Meaning                                   |
@@ -606,8 +616,8 @@ Bindings:
 | `c`   | `pending-list-cancel`    | Cancel; reason `:cancelled-from-list`.   |
 | `q`   | `quit-window`            | Bury the buffer.                         |
 
-The list does not auto-refresh in v0.1; press `g` to update. Auto-
-refresh is on the v0.2 roadmap.
+The list doesn't auto-refresh in v0.1; press `g` to update.
+Auto-refresh is on the v0.2 list.
 
 ## Customization
 
@@ -623,8 +633,8 @@ refresh is on the v0.2 roadmap.
 | `pending-label-max-width`         | `60`         | Maximum visible label width; longer labels are truncated.               |
 | `pending-confirm-on-emacs-exit`   | `nil`        | When non-nil, prompt before exit while placeholders are active.         |
 
-Spinner styles ship with: `dots-1`, `dots-2`, `line`, `arc`, `clock`.
-Add your own via:
+Spinner styles ship with: `dots-1`, `dots-2`, `line`, `arc`,
+`clock`. Add your own:
 
 ```elisp
 (add-to-list 'pending-spinner-styles
@@ -637,8 +647,7 @@ The library never adds a `face` text property to text it inserts
 itself. Faces are applied only to overlay properties — the overlay's
 `face` (when adopting an existing region), the overlay's
 `before-string` lighter, and the overlay's `after-string` progress
-bar. This means the surrounding buffer's font-lock is never disturbed
-by the placeholder library.
+bar. The surrounding buffer's font-lock is never disturbed.
 
 | Face                       | Role                                                          |
 |----------------------------|---------------------------------------------------------------|
@@ -654,8 +663,8 @@ by the placeholder library.
 
 ### `:on-cancel` (per-placeholder)
 
-Called *before* the cancellation pipeline runs. Abort underlying work
-here — kill processes, abort gptel requests, cancel timers.
+Called *before* the cancellation pipeline runs. Abort underlying
+work here — kill processes, abort gptel requests, cancel timers.
 
 ```elisp
 (pending-make (current-buffer)
@@ -665,13 +674,17 @@ here — kill processes, abort gptel requests, cancel timers.
 ```
 
 If `:on-cancel` signals an error or `quit`, the cancel pipeline
-catches it and proceeds; the placeholder cannot get stranded.
+catches it and proceeds; the placeholder can't get stranded. I went
+back and forth on this one — letting an `:on-cancel` error abort
+the cancel felt more honest, but in practice it leaves zombies in
+the buffer when the underlying API has already changed shape under
+you. Catching wins.
 
 ### `:on-resolve` (per-placeholder)
 
 Called *once* on transition to any terminal state (`:resolved`,
-`:rejected`, `:cancelled`, `:expired`). Inspect `(pending-status p)`
-inside the callback to differentiate.
+`:rejected`, `:cancelled`, `:expired`). Inspect
+`(pending-status p)` inside the callback to differentiate.
 
 ```elisp
 (pending-make (current-buffer)
@@ -682,24 +695,25 @@ inside the callback to differentiate.
                                      (pending-status p))))
 ```
 
-### Global hooks installed by the library
+### Global hooks the library installs
 
 - `kill-buffer-hook` (buffer-local) — cancels every placeholder in
   the buffer being killed with reason `:buffer-killed`.
-- `kill-emacs-query-functions` — when `pending-confirm-on-emacs-exit`
-  is non-nil, prompts before exit if active placeholders exist.
+- `kill-emacs-query-functions` — when
+  `pending-confirm-on-emacs-exit` is non-nil, prompts before exit
+  if active placeholders exist.
 - `window-buffer-change-functions` — re-arms the parked animation
   timer when a placeholder's buffer becomes visible.
 
-`pending-unload-function` cleans up the timer and removes the global
-hooks on `unload-feature`.
+`pending-unload-function` cleans up the timer and removes the
+global hooks on `unload-feature`.
 
 ## Comparison with `org-pending`
 
-Bruno Barbier's [`org-pending`][1] is a closely related upstream Org
-patch that nevertheless declares itself independent of Org mode. It
-solves a similar problem from a different angle. The table is a
-condensed version of `RESEARCH.md` §1.
+Bruno Barbier's [`org-pending`][1] is a closely related upstream
+Org patch that nevertheless declares itself independent of Org
+mode. It solves a similar problem from a different angle. The table
+is a condensed version of `RESEARCH.md` §1.
 
 | Aspect            | `org-pending`                                | `pending`                                                |
 |-------------------|----------------------------------------------|----------------------------------------------------------|
@@ -713,34 +727,35 @@ condensed version of `RESEARCH.md` §1.
 | Indirect buffers  | Read-only projection                         | Not yet — overlay+text-property scope is single-buffer   |
 | Kill-emacs query  | Built in (`kill-emacs-query-functions`)      | Same hook, gated by `pending-confirm-on-emacs-exit`      |
 
-The two libraries can coexist. Pick whichever suits your caller: if
-you live in Org and want minimal animation, prefer `org-pending`; if
-you want streaming and progress visualization out of the box, prefer
-`pending`.
+The two libraries can coexist. Pick whichever suits your caller:
+if you live in Org and want minimal animation, prefer
+`org-pending`; if you want streaming and progress visualization
+out of the box, prefer this one.
 
 [1]: https://framagit.org/brubar/org-mode-mirror/-/tree/bba-pending-contents
 
-## Limitations and caveats
+## Caveats
 
-- **~50 placeholders per buffer guideline.** Each placeholder is an
-  overlay, and overlays have O(n) scan cost for some buffer
-  operations. Keep concurrent counts modest.
-- **Variable-pitch alignment.** The `:percent` and `:eta` bars assume
-  a monospaced cell width. Under variable-pitch buffer faces, the bar
-  may look ragged. Set `pending-bar-family` to a fixed-pitch family
-  to compensate.
+- **About 50 placeholders per buffer is the sweet spot.** Each
+  placeholder is an overlay, and overlays have O(n) scan cost for
+  some buffer operations. Keep concurrent counts modest. I haven't
+  hit any actual problem in practice, but the cost is real.
+- **Variable-pitch alignment.** The `:percent` and `:eta` bars
+  assume a monospaced cell width. Under variable-pitch buffer
+  faces, the bar may look ragged. Set `pending-bar-family` to a
+  fixed-pitch family to compensate.
 - **No SVG spinner in v0.1.** Spinners are text glyphs only. SVG
-  spinners (and a fringe-bitmap indicator) are on the v0.2 roadmap.
+  spinners (and a fringe-bitmap indicator) are on the v0.2 list.
 - **Manual refresh of `*Pending*` list.** Press `g` to update; the
-  list does not auto-refresh on registry mutation in v0.1.
-- **Single-buffer scope.** A placeholder's overlay and read-only text
-  properties live in one buffer. There is no projection across
+  list doesn't auto-refresh on registry mutation in v0.1.
+- **Single-buffer scope.** A placeholder's overlay and read-only
+  text properties live in one buffer. There's no projection across
   indirect buffers in v0.1; `org-pending`-style indirect-buffer
   projection is on the roadmap.
-- **No cross-buffer multi-region pending.** A single pending struct
-  represents one contiguous region in one buffer. Coordinate multiple
-  related placeholders via the `:group` keyword and
-  `pending-list-active`.
+- **No cross-buffer multi-region pending.** A single pending
+  struct represents one contiguous region in one buffer.
+  Coordinate multiple related placeholders via the `:group`
+  keyword and `pending-list-active`.
 
 ## Roadmap (v0.2)
 
@@ -749,7 +764,8 @@ you want streaming and progress visualization out of the box, prefer
 - `pending-as-promise` adapter for `aio` users.
 - SVG spinner for graphical frames.
 - Fringe bitmap indicator beside the placeholder.
-- `*Region Lock*`-style description buffer for a single placeholder.
+- `*Region Lock*`-style description buffer for a single
+  placeholder.
 - Indirect-buffer projection of read-only properties.
 
 ## Development
@@ -764,7 +780,7 @@ eask install-deps
 # Compile (warning-free)
 eask compile
 
-# Run tests (72 ERT tests)
+# Run tests (77 ERT tests)
 eask test ert pending-test.el
 
 # All-in-one via Make
@@ -778,8 +794,8 @@ make clean
 
 ### Generating the manual
 
-The Texinfo source lives at `doc/pending.texi`; the built `pending.info`
-ships in the package.
+The Texinfo source lives at `doc/pending.texi`; the built
+`pending.info` ships in the package.
 
 ```bash
 make info       # build doc/pending.info
@@ -803,18 +819,18 @@ M-x pending-demo
 
 ## Contributing
 
-Bug reports and pull requests are welcome via GitHub. When filing an
-issue, please include:
+Bug reports and pull requests are welcome via GitHub. When filing
+an issue, please include:
 
 - Emacs version (`M-x emacs-version`).
-- Whether you are running graphical or terminal Emacs.
+- Whether you're running graphical or terminal Emacs.
 - Steps to reproduce.
 - A backtrace if the bug manifests as an error.
 
 When sending a PR, please:
 
-- Match the existing code style (lexical binding, `--` for internal
-  symbols, comprehensive docstrings).
+- Match the existing code style: lexical binding, `--` for internal
+  symbols, comprehensive docstrings.
 - Add ERT tests for new behaviour.
 - Ensure `eask compile` is warning-free and `eask test` is green.
 - Run `M-x checkdoc` on touched files.
@@ -825,10 +841,11 @@ BSD 3-Clause. See [LICENSE.md](LICENSE.md).
 
 ## Acknowledgments
 
-- **`org-pending`** (Bruno Barbier) — prior art and design vocabulary;
-  see `RESEARCH.md` for a detailed comparison.
-- **`gptel`** (karthink) — marker discipline (`gptel.el:1389, 1794`)
-  inspired the streaming end-marker insertion-type flip.
+- **`org-pending`** (Bruno Barbier) — prior art and design
+  vocabulary; see `RESEARCH.md` for a detailed comparison.
+- **`gptel`** (karthink) — marker discipline (`gptel.el:1389,
+  1794`) directly inspired the streaming end-marker
+  insertion-type flip.
 - **`agent-shell`** — the active-message lifecycle pattern in
   `agent-shell-active-message.el` informed the global animation
   timer.
