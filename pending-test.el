@@ -11,39 +11,36 @@
 
 ;;; Commentary:
 
-;; ERT tests for `pending'.  The Phase-1 smoke and struct tests stay
-;; intact; Phase 2 adds tests for state transitions, registry sync,
-;; the buffer-kill hook, and the public predicates and accessors;
-;; Phase 3 covers the spinner animation — frame index, render side
-;; effects, the visibility gate, and timer parking; Phase 4 covers
-;; the determinate / ETA bar rendering and per-indicator dispatch;
-;; Phase 5 covers edit-survival (read-only properties, front-sticky
-;; and rear-nonsticky semantics, region-deletion auto-cancel,
-;; marker survival across edits before/after the placeholder);
-;; Phase 6 covers streaming — append correctness across many
-;; chunks, the `:streaming' transition on first chunk, mid-stream
-;; cancel, stream-then-resolve replacement, the empty-chunk no-op,
-;; read-only enforcement on streamed text, and the
-;; `pending-stream-finish' read-only strip and never-streamed
-;; fallback behaviour; Phase 7 covers process integration —
-;; `pending-attach-process' wrapping a process sentinel so that
-;; clean exits and failure exits both translate to the right
-;; rejection, that resolving before the process exits leaves the
-;; sentinel a no-op, that a pre-existing sentinel still fires
-;; when chained, that non-terminal sentinel events (e.g.
-;; `\"open\\n\"', `\"run\\n\"', `\"stopped\\n\"') do NOT reject
-;; the placeholder (a critical correctness property for network
-;; processes), and that a signalling pre-existing sentinel does
-;; not block the wrapper's lifecycle handling; plus a defence-in-
-;; depth check that `pending-stream-finish' on a killed buffer is
-;; safe (the kill-buffer-hook normally cancels first); Phase 8
-;; covers the interactive UI — `pending-cancel-at-point' both for
-;; the success path and the no-pending `user-error' branch,
-;; `pending-list' populating a `tabulated-list-mode' buffer with
-;; rows for each registered placeholder, `pending-list-cancel'
-;; cancelling the row's struct, and `pending-mode-line-string'
-;; together with `global-pending-lighter-mode' producing the right
-;; lighter format and toggling cleanly on/off.
+;; ERT tests for `pending'.  Tests are grouped by topic:
+;;
+;;   - smoke and struct construction
+;;   - state transitions (the four terminal paths and their
+;;     bookkeeping invariants)
+;;   - registry and the buffer-kill hook
+;;   - accessor predicates and snapshots
+;;   - slot mutation via `pending-update'
+;;   - adopt-mode placement and deadline timer
+;;   - re-entrancy guards and on-resolve coverage
+;;   - spinner animation (frame index, render side effects,
+;;     visibility gate, single-timer parking)
+;;   - determinate and ETA bar rendering, per-indicator dispatch
+;;   - edit-survival (read-only properties, sticky semantics,
+;;     region-deletion auto-cancel, marker survival across edits)
+;;   - streaming (chunk append, `:streaming' transition, mid-stream
+;;     cancel, stream-then-resolve, empty-chunk no-op, read-only
+;;     enforcement on streamed text, finish strip and
+;;     never-streamed fallback)
+;;   - process integration (sentinel wrapping, clean and failure
+;;     exits, resolve-before-exit no-op, sentinel chaining, network
+;;     non-terminal events, faulty pre-existing sentinel survival,
+;;     re-attach without wrapper-chain leak)
+;;   - buffer-dead defence in depth
+;;   - interactive UI (`pending-cancel-at-point', `pending-list',
+;;     `pending-list-cancel', `pending-mode-line-string',
+;;     `global-pending-lighter-mode')
+;;   - `kill-emacs-query' and demo wiring
+;;   - simple positional API (`pending-region', `pending-insert')
+;;   - face policy (the library never faces text it inserts itself)
 
 ;;; Code:
 
@@ -178,7 +175,7 @@ Must be called inside `pending-test--with-mocked-time'."
     (setq pending-test--clock target)))
 
 
-;;; Phase 1 carry-over tests
+;;; Smoke and struct tests
 
 (ert-deftest pending-test/loads ()
   "Smoke test: confirm `pending' is loaded."
@@ -208,7 +205,7 @@ ordering and the *Pending* list view stay deterministic."
       (should-not (eq s1 s2)))))
 
 
-;;; Phase 2 — state transitions
+;;; State transitions
 
 (ert-deftest pending-test/scheduled-to-resolved ()
   "Creating then resolving leaves status `:resolved' and replaces text."
@@ -278,7 +275,7 @@ ordering and the *Pending* list view stay deterministic."
           (should (eq (pending-status p) :rejected)))))))
 
 
-;;; Phase 2 — registry / buffer-kill
+;;; Registry and buffer-kill
 
 (ert-deftest pending-test/registry-add-remove ()
   "Creating N placeholders adds N entries; resolving drains both registries."
@@ -329,7 +326,7 @@ ordering and the *Pending* list view stay deterministic."
         (when (buffer-live-p buf) (kill-buffer buf))))))
 
 
-;;; Phase 2 — accessors
+;;; Accessors
 
 (ert-deftest pending-test/pending-at-finds-pending ()
   "`pending-at' returns the struct on the placeholder, nil after resolve."
@@ -360,7 +357,7 @@ ordering and the *Pending* list view stay deterministic."
         (should (= 0 (length (pending-list-active buf-a :bar))))))))
 
 
-;;; Phase 2 — slot mutation
+;;; Slot mutation
 
 (ert-deftest pending-test/pending-update-mutates-slots ()
   "`pending-update' replaces named slots without changing status."
@@ -378,7 +375,7 @@ ordering and the *Pending* list view stay deterministic."
           (pending-finish p "done"))))))
 
 
-;;; Phase 2 — adopt mode and deadline timer
+;;; Adopt mode and deadline timer
 
 (ert-deftest pending-test/pending-make-adopt-mode ()
   "Adopt mode wraps an existing region without inserting new text.
@@ -425,7 +422,7 @@ deterministic and does not burn real wall-clock time on a
             (should (eq (pending-reason p) :timed-out))))))))
 
 
-;;; Phase 2 — re-entrancy and on-resolve coverage
+;;; Re-entrancy and on-resolve coverage
 
 (ert-deftest pending-test/cancel-reentry-is-safe ()
   "Re-entrant `pending-cancel' from inside on-cancel is a safe no-op.
@@ -484,7 +481,7 @@ in a non-terminal state."
             (should (eq (pending-status p) (cdr case)))))))))
 
 
-;;; Phase 3 — spinner animation
+;;; Spinner animation
 
 (ert-deftest pending-test/spinner-renders-frame ()
   "`pending--tick' decorates the overlay with a spinner glyph.
@@ -658,7 +655,7 @@ unknown keys fall back to `pending-default-spinner-style'."
       (should (> (length frames) 0)))))
 
 
-;;; Phase 4 — determinate and ETA bars
+;;; Determinate and ETA bars
 
 (ert-deftest pending-test/eta-fraction-monotonic ()
   "ETA fraction is monotonically non-decreasing over time."
@@ -762,7 +759,7 @@ characters, not bytes."
           (should (null (overlay-get (pending-region p) 'after-string))))))))
 
 
-;;; Phase 5 — edit-survival
+;;; Edit-survival
 
 (ert-deftest pending-test/cannot-edit-placeholder-text ()
   "User attempting to edit placeholder text is rejected.
@@ -888,7 +885,7 @@ the normal way."
           (should (string-match-p "POST-DONE" (buffer-string))))))))
 
 
-;;; Phase 6 — streaming
+;;; Streaming
 
 (ert-deftest pending-test/stream-append-correctness ()
   "Stream three chunks; resulting region equals the concatenation.
@@ -1060,7 +1057,7 @@ to be silently dropped because the placeholder was already terminal."
           (should (eq status-at-on-resolve :cancelled)))))))
 
 
-;;; Phase 7 — process integration
+;;; Process integration
 
 (ert-deftest pending-test/process-clean-exit-rejects ()
   "A clean process exit on an unresolved placeholder rejects.
@@ -1087,9 +1084,10 @@ rejects with the reason `\"process exited without resolving\"'."
 
 (ert-deftest pending-test/process-failure-rejects ()
   "A non-zero process exit rejects with a `process:' reason.
-The wrapper sentinel detects an `\"exited abnormally\"' event and
-rejects with `\"process: ...\"' formed from the trimmed event
-string."
+The wrapper sentinel reads the live `process-status' (`exit' with
+non-zero exit code in this case) and rejects with a
+`\"process: ...\"' string built from the exit code, not from the
+localized event string."
   (pending-test--with-fresh-registry
     (pending-test--with-buffer (buf "*p-proc-fail*")
       (with-current-buffer buf
@@ -1262,7 +1260,7 @@ closures."
           (should (= user-sentinel-calls 1)))))))
 
 
-;;; Phase 7 — buffer-dead defense in depth
+;;; Buffer-dead defense in depth
 
 (ert-deftest pending-test/stream-finish-buffer-dead-still-resolves ()
   "Killing the buffer mid-stream and then calling `pending-stream-finish'
@@ -1291,7 +1289,7 @@ normal use."
 
 
 
-;;; Phase 8 — interactive UI
+;;; Interactive UI
 
 (ert-deftest pending-test/cancel-at-point-cancels ()
   "`pending-cancel-at-point' cancels the pending at point.
@@ -1402,7 +1400,7 @@ it via `delq' so a subsequent `memq' returns nil."
       (should-not (memq pending--mode-line-construct global-mode-string)))))
 
 
-;;; Phase 9 — kill-emacs-query and demo
+;;; Kill-emacs-query and demo
 
 (ert-deftest pending-test/kill-emacs-query-default-allows-exit ()
   "With `pending-confirm-on-emacs-exit' nil, the query allows exit.
@@ -1443,7 +1441,7 @@ the demo buffer so leftover timers cannot fire after the test ends."
       (kill-buffer "*pending-demo*"))))
 
 
-;;; Phase 10 — simple positional API
+;;; Simple positional API
 
 (ert-deftest pending-test/region-creates-token ()
   "`pending-region' returns a usable token with start/end markers."
@@ -1539,7 +1537,7 @@ the demo buffer so leftover timers cannot fire after the test ends."
             (should (string-match-p "static" bs))))))))
 
 
-;;; Phase 11 — face policy: never face inserted text
+;;; Face policy: never face inserted text
 
 (ert-deftest pending-test/inserted-label-has-no-face ()
   "`pending-make' insert mode: the inserted label text has no `face' property."

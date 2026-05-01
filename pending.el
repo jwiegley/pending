@@ -870,7 +870,7 @@ SVG image support is compiled into Emacs."
        (image-type-available-p 'svg)))
 
 
-;;; Progress bar rendering (Phase 4)
+;;; Progress bar rendering
 
 (defconst pending--bar-blocks-eighths
   ["·" "▏" "▎" "▍" "▌" "▋" "▊" "▉" "█"]
@@ -1240,12 +1240,16 @@ position falls outside BUFFER's bounds."
                               'read-only t
                               'front-sticky '(read-only)
                               'rear-nonsticky '(read-only)))
-          ;; End marker is insertion-type nil for now: Phase 6 will
-          ;; flip it to t while streaming and back to nil at finish,
-          ;; mirroring gptel's tracking-marker discipline
-          ;; (gptel.el:1389, 1794).  Keeping it nil now means typing
-          ;; just after the placeholder lands outside the region — the
-          ;; behaviour the canonical smoke test expects.
+          ;; End marker is insertion-type nil at construction.
+          ;; `pending-stream-insert' flips it to t on the first chunk
+          ;; so subsequent inserts at its position append rather than
+          ;; push the marker; `pending-stream-finish' flips it back
+          ;; to nil so the resolved text is not stretched by typing
+          ;; immediately after.  Mirrors gptel's tracking-marker
+          ;; discipline (gptel.el:1389, 1794).  At rest, with no
+          ;; streaming in progress, typing just after the placeholder
+          ;; lands outside the region — the canonical smoke-test
+          ;; behaviour.
           (setq end-marker (copy-marker (point) nil))))
        ;; Adopt mode.
        (t
@@ -1279,8 +1283,10 @@ position falls outside BUFFER's bounds."
                '(read-only t
                            front-sticky (read-only)
                            rear-nonsticky (read-only)))))))))
-    ;; Front- and rear-advance both nil for now; Phase 6 will flip the
-    ;; rear when streaming begins.
+    ;; Overlay front- and rear-advance default to nil; the end
+    ;; marker's insertion-type is flipped to t by
+    ;; `pending-stream-insert' so streamed chunks extend the
+    ;; placeholder cleanly.
     (let* ((ov (make-overlay (marker-position start-marker)
                              (marker-position end-marker)
                              buffer))
@@ -1859,8 +1865,11 @@ LABEL, PERCENT, ETA, and INDICATOR replace the corresponding slots
 when non-nil.  No state transition happens; the next animation tick
 will pick up the new values.  Return P.
 
-Clears the spinner-glyph render cache so any indicator/style changes
-apply on the next tick.
+Clears P's `last-frame' slot so the next render redraws the
+indicator even though the frame index has not advanced — a live
+`:indicator' or `:spinner-style' change therefore takes effect on
+the next tick.  The shared SVG cache (`pending--svg-cache') is
+not touched.
 
 If P is in a terminal state, log a `:debug' warning and return P
 unchanged."
