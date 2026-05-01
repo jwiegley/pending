@@ -11,6 +11,12 @@
 
 (package-file "pending.el")
 
+(files "pending.el"
+       "doc/pending.info"
+       "doc/pending.texi"
+       "README.md"
+       "LICENSE")
+
 (script "test" "eask test ert pending-test.el")
 
 (source "gnu")

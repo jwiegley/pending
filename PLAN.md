@@ -241,6 +241,11 @@ the list and from point both work; lighter shows summary.
       placeholders of varying durations and modes.
 - [x] README expanded with API table, integration recipes, comparison
       to `org-pending`, screenshots/asciinema (optional).
+- [x] Texinfo manual (`doc/pending.texi`) with full API reference,
+      integration recipes, customization tables, and indices; built
+      `doc/pending.info` shipped in the package.
+- [x] Makefile `docs`/`info`/`html` targets; `Eask` lists docs in
+      `(files ...)`; `.gitignore` ignores generated HTML.
 - [x] `;;;###autoload` cookies on user-facing commands.
 - [ ] Tag `0.1.0` once everything is green.
       *(Tagging happens outside this implementation phase; the user
