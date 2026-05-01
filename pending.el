@@ -39,12 +39,12 @@
 ;; See `DESIGN.md' in this package for the canonical reference on the
 ;; API, visual design, lifecycle, and implementation plan.
 ;;
-;; This file currently provides Phase 5: the core lifecycle plus
+;; This file currently provides Phase 6: the core lifecycle plus
 ;; spinner animation plus determinate and ETA progress bars plus
-;; edit-survival.  On top of the Phase 1 skeleton (customization
-;; group, faces, struct, error symbol, registries) and Phase 2 core
-;; lifecycle (`pending-make' in insert and adopt modes,
-;; `pending-resolve', `pending-reject', `pending-cancel',
+;; edit-survival plus streaming.  On top of the Phase 1 skeleton
+;; (customization group, faces, struct, error symbol, registries)
+;; and Phase 2 core lifecycle (`pending-make' in insert and adopt
+;; modes, `pending-resolve', `pending-reject', `pending-cancel',
 ;; `pending-update', the public predicates and accessors, registry
 ;; sync, the `kill-buffer-hook' teardown), Phase 3 added a single
 ;; global animation timer that walks the registry and decorates each
@@ -58,8 +58,14 @@
 ;; `read-only' so insertions just after it are allowed) and installs
 ;; overlay modification-hooks that auto-cancel the placeholder with
 ;; reason `:region-deleted' when the user collapses its overlay to
-;; zero length.  Streaming, the interactive lister, and process
-;; integration are still to come.
+;; zero length.  Phase 6 adds `pending-resolve-stream' and
+;; `pending-finish-stream' for incremental content delivery: the
+;; first chunk flips the end marker's insertion-type to t and
+;; transitions status to `:streaming', subsequent chunks append at
+;; the end marker and grow the overlay so decorations and edit
+;; protection track the streamed text, and `pending-finish-stream'
+;; locks the marker, strips read-only, and finalizes to `:resolved'.
+;; The interactive lister and process integration are still to come.
 
 ;;; Code:
 
@@ -987,6 +993,169 @@ Return t on success, or nil if P was already terminal."
        p :cancelled effective-reason
        (format "✗ %s" (pending--format-reason effective-reason))
        'pending-cancelled-face t)))))
+
+
+;;; Public API: streaming
+
+(defun pending-resolve-stream (p chunk)
+  "Append CHUNK (a string) to P's placeholder region.
+The spinner / progress indicator stays visible.
+
+On the first chunk (when P is `:scheduled' or `:running') the
+loading-label content is deleted and replaced by CHUNK, the end
+marker's insertion-type is flipped to t, and the status transitions
+to `:streaming'.  Subsequent chunks append at the end marker, which
+advances with the insert because of its insertion-type.
+
+Streamed text gets the same read-only properties as the initial
+label (`read-only' t, `front-sticky' \\='(read-only),
+`rear-nonsticky' \\='(read-only)) so the user cannot edit it
+mid-stream.  `pending-finish-stream' strips these properties so the
+resolved text becomes editable.  The streamed text is faced with
+P's face slot (or `pending-face' if unset), keeping the same visual
+treatment as the initial label.  The overlay is grown via
+`move-overlay' so its decorations and modification-hooks cover the
+streamed text too.
+
+This does NOT finalize.  The caller must follow up with
+`pending-finish-stream', `pending-reject', or `pending-cancel'.
+
+If P is already terminal, this is a no-op and a `:debug' warning is
+logged (the chunk is dropped).
+
+CHUNK must be a string; an empty string is a no-op.  Signals
+`wrong-type-argument' if CHUNK is not a string."
+  (cond
+   ((not (stringp chunk))
+    (signal 'wrong-type-argument (list 'stringp chunk)))
+   ((zerop (length chunk)) nil)
+   ((pending--terminal-status-p (pending-status p))
+    (display-warning
+     'pending
+     (format "Drop stream chunk: %s already terminal (%s)"
+             (pending-id p) (pending-status p))
+     :debug)
+    nil)
+   (t
+    (let ((buf (pending-buffer p)))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (let ((first-chunk-p
+                 (memq (pending-status p) '(:scheduled :running))))
+            ;; First chunk: delete the label content (it was just a
+            ;; loading placeholder), flip end marker insertion-type to
+            ;; t, and transition state.  This mirrors gptel's
+            ;; tracking-marker pattern at gptel.el:1794 and gives the
+            ;; user the natural visual: the "Calling Claude" label is
+            ;; replaced by the first arriving chunk of real content.
+            (when first-chunk-p
+              (let ((inhibit-read-only t)
+                    (inhibit-modification-hooks t)
+                    (start (marker-position (pending-start p)))
+                    (end (marker-position (pending-end p))))
+                (when (and start end (< start end))
+                  (delete-region start end)))
+              (set-marker-insertion-type (pending-end p) t)
+              (setf (pending-status p) :streaming)))
+          ;; Insert at the end marker.  With insertion-type t the
+          ;; marker advances past the inserted text on its own.
+          ;; `inhibit-modification-hooks' prevents `pending--on-modify'
+          ;; from firing on this library-internal insert.
+          (let ((inhibit-read-only t)
+                (inhibit-modification-hooks t)
+                (face (or (pending-face p) 'pending-face)))
+            (save-excursion
+              (goto-char (pending-end p))
+              (insert (propertize chunk
+                                  'face face
+                                  'read-only t
+                                  'front-sticky '(read-only)
+                                  'rear-nonsticky '(read-only)))))
+          ;; Grow the overlay to cover the streamed text so its face,
+          ;; decorations, and modification-hooks track the new range.
+          ;; Without this, the overlay would still cover only the
+          ;; original [start, end] and edits inside the streamed
+          ;; region would not be detected.
+          (let ((ov (pending-overlay p)))
+            (when (and (overlayp ov) (overlay-buffer ov))
+              (move-overlay ov
+                            (marker-position (pending-start p))
+                            (marker-position (pending-end p)))))
+          t))))))
+
+(defun pending-finish-stream (p)
+  "Finalize a streamed placeholder.
+Transition P from `:streaming' to `:resolved'.  Lock the end marker
+by flipping its insertion-type back to nil, strip read-only
+properties from the streamed region (so the user can edit the
+resolved text), strip the overlay's animated decorations, delete
+the overlay, unregister P, and fire its `on-resolve' callback.
+Mirrors gptel's finalize pattern at gptel.el:1389.
+Return t on success.
+If P is `:scheduled' or `:running' (no chunks were ever streamed),
+behave like `(pending-resolve P \"\")'.
+If P is already terminal, this is a no-op and a `:debug' warning
+is logged."
+  (cond
+   ((pending--terminal-status-p (pending-status p))
+    (display-warning
+     'pending
+     (format "ignoring finish-stream on already-terminal placeholder %s (status %s)"
+             (pending-id p) (pending-status p))
+     :debug)
+    nil)
+   ((memq (pending-status p) '(:scheduled :running))
+    ;; No chunks ever streamed — replace the label with the empty
+    ;; string, going through the regular resolve path.
+    (pending-resolve p ""))
+   (t
+    ;; In :streaming state — finalize without re-swapping the buffer
+    ;; text (it already holds the streamed content).
+    (let ((buf (pending-buffer p)))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (set-marker-insertion-type (pending-end p) nil)
+          (let ((inhibit-read-only t)
+                (inhibit-modification-hooks t)
+                (start (marker-position (pending-start p)))
+                (end (marker-position (pending-end p))))
+            (when (and start end)
+              ;; Strip read-only and stickiness from the streamed
+              ;; region so the resolved text becomes ordinary
+              ;; editable text.  We keep the face so the streamed
+              ;; content remains visually distinct.
+              (remove-text-properties
+               start end
+               '(read-only nil front-sticky nil rear-nonsticky nil))))
+          (setf (pending-status p) :resolved
+                (pending-resolved-at p) (float-time))
+          ;; Strip animated overlay decorations, then delete the
+          ;; overlay so the resolved text no longer carries any
+          ;; placeholder-specific properties.
+          (let ((ov (pending-overlay p)))
+            (when (and (overlayp ov) (overlay-buffer ov))
+              (overlay-put ov 'before-string nil)
+              (overlay-put ov 'after-string nil)
+              (delete-overlay ov))
+            (setf (pending-overlay p) nil))
+          (pending--unregister p)
+          ;; Clear markers, mirroring `pending--resolve-internal'.
+          (let ((sm (pending-start p))
+                (em (pending-end p)))
+            (when (markerp sm) (set-marker sm nil))
+            (when (markerp em) (set-marker em nil)))
+          ;; Fire on-resolve safely; a buggy callback must not crash
+          ;; the finalize path.
+          (when (pending-on-resolve p)
+            (condition-case err
+                (funcall (pending-on-resolve p) p)
+              (error
+               (display-warning
+                'pending
+                (format "on-resolve callback for %s signaled: %S"
+                        (pending-id p) err)
+                :error))))
+          t))))))
 
 
 ;;; Public API: mid-flight updates

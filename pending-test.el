@@ -17,7 +17,17 @@
 ;; intact; Phase 2 adds tests for state transitions, registry sync,
 ;; the buffer-kill hook, and the public predicates and accessors;
 ;; Phase 3 covers the spinner animation — frame index, render side
-;; effects, the visibility gate, and timer parking.
+;; effects, the visibility gate, and timer parking; Phase 4 covers
+;; the determinate / ETA bar rendering and per-indicator dispatch;
+;; Phase 5 covers edit-survival (read-only properties, front-sticky
+;; and rear-nonsticky semantics, region-deletion auto-cancel,
+;; marker survival across edits before/after the placeholder);
+;; Phase 6 covers streaming — append correctness across many
+;; chunks, the `:streaming' transition on first chunk, mid-stream
+;; cancel, stream-then-resolve replacement, the empty-chunk no-op,
+;; read-only enforcement on streamed text, and the
+;; `pending-finish-stream' read-only strip and never-streamed
+;; fallback behaviour.
 
 ;;; Code:
 
@@ -701,6 +711,134 @@ the normal way."
          (goto-char (point-min))
          (insert "POST-")
          (should (string-match-p "POST-DONE" (buffer-string))))))))
+
+
+;;; Phase 6 — streaming
+
+(ert-deftest pending-test/stream-append-correctness ()
+  "Stream three chunks; resulting region equals the concatenation.
+The end marker advances on each insert because its insertion-type
+flips to t on the first chunk, so successive inserts append rather
+than push the marker."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-stream*")
+     (with-current-buffer buf
+       (insert "Pre:")
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve-stream p "abc")
+         (pending-resolve-stream p "def")
+         (pending-resolve-stream p "ghi")
+         (pending-finish-stream p)
+         (should (eq (pending-status p) :resolved))
+         (should (string-match-p "Pre:abcdefghi" (buffer-string))))))))
+
+(ert-deftest pending-test/stream-transitions-to-streaming ()
+  "First chunk transitions `:scheduled' -> `:streaming'.
+The end marker's insertion-type also flips from nil to t at this
+moment so subsequent inserts at its position advance the marker."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-trans*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (should (eq (pending-status p) :scheduled))
+         (pending-resolve-stream p "hi")
+         (should (eq (pending-status p) :streaming))
+         (pending-finish-stream p)
+         (should (eq (pending-status p) :resolved)))))))
+
+(ert-deftest pending-test/stream-then-resolve-replaces ()
+  "Calling `pending-resolve' mid-stream replaces the streamed content.
+The streamed text is dropped; the buffer ends up with the
+replacement text from `pending-resolve' regardless of how many
+chunks had streamed in."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-replace*")
+     (with-current-buffer buf
+       (insert "Pre:")
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve-stream p "streamed-content")
+         (pending-resolve p "FINAL")
+         (should (eq (pending-status p) :resolved))
+         (should (string-match-p "Pre:FINAL" (buffer-string)))
+         (should-not (string-match-p "streamed-content" (buffer-string))))))))
+
+(ert-deftest pending-test/stream-mid-cancel ()
+  "Cancelling mid-stream runs `on-cancel' and replaces with cancellation glyph.
+The streamed content is dropped via the regular swap-region path
+that `pending-cancel' invokes."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-mid-cancel*")
+     (with-current-buffer buf
+       (let* ((flag nil)
+              (p (pending-make buf :label "X"
+                               :on-cancel (lambda (_) (setq flag t)))))
+         (pending-resolve-stream p "partial")
+         (pending-cancel p :user)
+         (should (eq (pending-status p) :cancelled))
+         (should flag)
+         ;; Streamed content is replaced with the cancellation glyph.
+         (should-not (string-match-p "partial" (buffer-string))))))))
+
+(ert-deftest pending-test/stream-empty-chunk-no-op ()
+  "Empty stream chunk is a no-op.
+Status does not transition; the placeholder stays in `:scheduled'
+because the empty-chunk early-return bypasses the state machine."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-empty*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve-stream p "")
+         (should (eq (pending-status p) :scheduled))
+         (pending-finish-stream p)
+         (should (eq (pending-status p) :resolved)))))))
+
+(ert-deftest pending-test/streamed-text-is-read-only ()
+  "Streamed text cannot be edited mid-stream.
+Each chunk is propertized `read-only' just like the initial label
+so the user gets the standard `text-read-only' rejection."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-stream-readonly*")
+     (with-current-buffer buf
+       (let ((p (pending-make buf :label "X")))
+         (pending-resolve-stream p "abc")
+         (goto-char (1+ (overlay-start (pending-overlay p))))
+         (should-error (let ((inhibit-read-only nil)) (insert "EVIL"))
+                       :type 'text-read-only))))))
+
+(ert-deftest pending-test/finish-stream-clears-read-only ()
+  "After `pending-finish-stream', the streamed text is freely editable.
+The finalize path calls `remove-text-properties' over the whole
+streamed region so `read-only', `front-sticky', and `rear-nonsticky'
+all come off."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-finish-edit*")
+     (with-current-buffer buf
+       (let* ((p (pending-make buf :label "X"))
+              (start nil) (end nil))
+         (pending-resolve-stream p "abc")
+         (setq start (marker-position (pending-start p))
+               end   (marker-position (pending-end p)))
+         (pending-finish-stream p)
+         (when (and start end)
+           (goto-char (1+ start))
+           (let ((inhibit-read-only nil))
+             (insert "X"))
+           (should (string-match-p "aXbc" (buffer-string)))))))))
+
+(ert-deftest pending-test/finish-stream-without-chunks ()
+  "Finish-stream on a never-streamed placeholder behaves like resolve.
+With no chunks ever streamed the call delegates to
+`(pending-resolve p \"\")', so the buffer ends up with the
+placeholder removed and replaced by the empty string."
+  (pending-test--with-fresh-registry
+   (pending-test--with-buffer (buf "*p-no-stream*")
+     (with-current-buffer buf
+       (insert "Before:")
+       (let ((p (pending-make buf :label "X")))
+         (pending-finish-stream p)
+         (should (eq (pending-status p) :resolved))
+         (should (string-match-p "Before:" (buffer-string)))
+         (should-not (string-match-p "X" (buffer-string))))))))
 
 
 (provide 'pending-test)
