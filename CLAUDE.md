@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project orientation
 
 `pending` is a standalone Emacs Lisp library for marking buffer regions whose
-content arrives asynchronously. Released as v0.2.0; see `git tag -l` for the
-canonical release point. The repository sits inside John Wiegley's
-`dot-emacs/lisp/` collection but has no coupling to the surrounding code; do
-not introduce one.
+content arrives asynchronously. Currently at v0.2.1 (v0.2.0 + hotfix); see
+`git tag -l` for the canonical release point. The repository sits inside John
+Wiegley's `dot-emacs/lisp/` collection but has no coupling to the surrounding
+code; do not introduce one.
 
 Read `DESIGN.md` (canonical spec, ~1600 lines), then `RESEARCH.md` (verified
 prior-art survey of `org-pending`, gptel, agent-shell), then `NOTES.md`
@@ -40,7 +40,7 @@ NOT treat them as errors. Real Emacs/Eask output appears after them.
 # Byte-compile (must stay warning-free)
 load-env-emacs30MacPort eask compile
 
-# Run the full ERT suite (currently 117 tests across pending-test.el and
+# Run the full ERT suite (currently 121 tests across pending-test.el and
 # pending-aio-test.el)
 load-env-emacs30MacPort eask test ert pending-test.el pending-aio-test.el
 make test                        # equivalent
@@ -232,7 +232,7 @@ holding live processes), update this function.
 - `cl-defstruct`, not plists. `cl-typecase` is fine but most dispatch is
   `pcase`. Avoid `cl-loop` where `dolist`/`dotimes`/`mapcar` will do.
 - New `defcustom`s need `:type`, `:group 'pending`, and
-  `:package-version '(pending . "0.1.0")` (registered in
+  `:package-version '(pending . "0.2.0")` (registered in
   `customize-package-emacs-version-alist` near the top of the file).
 - New public API entries need `;;;###autoload` only if the user might call
   them before the package is loaded (interactive commands, top-level

@@ -887,7 +887,7 @@ eask install-deps
 # Compile (warning-free)
 eask compile
 
-# Run tests (117 ERT tests across pending-test.el and pending-aio-test.el)
+# Run tests (121 ERT tests across pending-test.el and pending-aio-test.el)
 eask test ert pending-test.el pending-aio-test.el
 
 # All-in-one via Make

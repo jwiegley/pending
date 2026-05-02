@@ -739,9 +739,12 @@ fillers. This avoids the "bar jumps" feel.
 
 Bar width: `pending-bar-width` defcustom, default 16. With
 proportional/variable-pitch fonts, pad with `(propertize " "
-'display '(space :width 1))` units; we use a monospace face on the
-bar segment regardless of buffer face by setting
-`(:family pending-bar-family)` on `pending-progress-face`.
+'display '(space :width 1))` units. (Historical: an earlier draft
+proposed forcing a monospace family on the bar segment via a
+`pending-bar-family` defcustom on `pending-progress-face`. Not
+shipped — `pending-progress-face` inherits from `pending-face`
+without a forced family. Variable-pitch users may see slight
+misalignment; this is documented as accepted limitation.)
 
 If the surrounding buffer uses `variable-pitch-mode`, the after-string
 is rendered in its own face, so monospace is preserved.

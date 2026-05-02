@@ -409,11 +409,21 @@ the repaint runs.  A second `pending--list-refresh-if-live' call
 arriving while the flag is set is coalesced — back-to-back
 registry mutations only repaint once.")
 
+(defvar pending--list-refresh-timer nil
+  "One-shot idle timer queued by `pending--list-refresh-if-live', or nil.
+Captured so `pending--list-refresh-flush' can cancel it before doing
+synchronous work and so `pending-unload-function' can cancel it on
+`unload-feature'; the timer body also clears this variable when it
+fires.")
+
 (defun pending--list-refresh-flush ()
   "Run any pending `*Pending*' debounced refresh synchronously now.
 Useful for tests and for callers that need the list view fully
 in sync with the registry before reading `tabulated-list-entries'.
 No-op when no refresh is queued."
+  (when (timerp pending--list-refresh-timer)
+    (cancel-timer pending--list-refresh-timer)
+    (setq pending--list-refresh-timer nil))
   (when pending--list-refresh-pending
     (setq pending--list-refresh-pending nil)
     (let ((buf (get-buffer "*Pending*")))
@@ -434,14 +444,14 @@ No-op when no refresh is queued."
   "Schedule a refresh of the `*Pending*' buffer if it is live and visible.
 Used to keep the list view in lockstep with the registry across
 mutating paths — `pending--register' and `pending--unregister'
-(which is invoked transitively from `pending--resolve-internal' and
+\(which is invoked transitively from `pending--resolve-internal' and
 `pending-stream-finish').  No-op when the buffer is missing, dead,
 in a different mode, off-screen, or when
 `pending-list-auto-refresh' is nil.
 
 The repaint runs asynchronously through a one-shot 0.05s idle
 timer so back-to-back mutations (e.g. resolving twenty placeholders
-in a tight loop) coalesce into a single tabulated-list-print.  The
+in a tight loop) coalesce into a single `tabulated-list-print'.  The
 visibility gate skips the work entirely when no window shows
 `*Pending*' — the user can press \\`g' on demand to refresh a
 hidden buffer.
@@ -456,21 +466,23 @@ during the idle window."
                     (buffer-live-p buf)
                     (get-buffer-window buf 'visible))))
     (setq pending--list-refresh-pending t)
-    (run-with-idle-timer
-     0.05 nil
-     (lambda ()
-       (setq pending--list-refresh-pending nil)
-       (let ((buf (get-buffer "*Pending*")))
-         (when (and buf (buffer-live-p buf))
-           (with-current-buffer buf
-             (when (derived-mode-p 'pending-list-mode)
-               (let ((inhibit-message t)
-                     (point-line (line-number-at-pos)))
-                 (pending--list-populate)
-                 (tabulated-list-print t)
-                 ;; Best-effort cursor restoration.
-                 (goto-char (point-min))
-                 (forward-line (1- point-line)))))))))))
+    (setq pending--list-refresh-timer
+          (run-with-idle-timer
+           0.05 nil
+           (lambda ()
+             (setq pending--list-refresh-pending nil
+                   pending--list-refresh-timer nil)
+             (let ((buf (get-buffer "*Pending*")))
+               (when (and buf (buffer-live-p buf))
+                 (with-current-buffer buf
+                   (when (derived-mode-p 'pending-list-mode)
+                     (let ((inhibit-message t)
+                           (point-line (line-number-at-pos)))
+                       (pending--list-populate)
+                       (tabulated-list-print t)
+                       ;; Best-effort cursor restoration.
+                       (goto-char (point-min))
+                       (forward-line (1- point-line))))))))))))
 
 (defun pending--terminal-status-p (status)
   "Return non-nil if STATUS is a terminal lifecycle keyword.
@@ -1101,14 +1113,20 @@ render path on one placeholder cannot kill the timer for everyone."
   "Re-arm the global timer if any active placeholder is now visible.
 Hooked onto `window-buffer-change-functions' so a placeholder whose
 buffer becomes visible after the timer parked itself starts animating
-again at the next available tick."
-  (let ((needed nil))
-    (maphash (lambda (_id p)
-               (when (pending--needs-redraw-p p)
-                 (setq needed t)))
-             pending--registry)
-    (when needed
-      (pending--ensure-timer))))
+again at the next available tick.
+
+Short-circuits when the global timer is already live so a flurry of
+window-configuration events does not redundantly walk the registry
+once per event.  Walks the registry with `catch'/`throw' to break
+out of the `maphash' as soon as one visible placeholder is found
+instead of always scanning all of them."
+  (unless (and pending--global-timer (timerp pending--global-timer))
+    (catch 'found
+      (maphash (lambda (_id p)
+                 (when (pending--needs-redraw-p p)
+                   (pending--ensure-timer)
+                   (throw 'found t)))
+               pending--registry))))
 
 (add-hook 'window-buffer-change-functions
           #'pending--on-window-buffer-change)
@@ -1831,6 +1849,9 @@ process's wrapper sentinel still chains through to its predecessor
 — so a stale process exit will still flow into `pending-reject',
 which is a no-op once P is terminal because of the
 single-resolution guard.
+Conversely, attaching the same process to two distinct Ps in succession
+leaves only the LAST P wired to the process — earlier Ps are orphaned
+from the lifecycle and stay active until explicitly resolved.
 The PROCESS reference is stored in P's `attached-process' slot.
 Return P."
   (let ((existing (process-sentinel process)))
@@ -2421,17 +2442,20 @@ seconds."
   "Tear down `pending' global state on `unload-feature'.
 Called automatically by `unload-feature'.  Removes the
 `window-buffer-change-functions' and `kill-emacs-query-functions'
-hooks, cancels the global animation timer, and walks every live
-buffer to remove the buffer-local `kill-buffer-hook' entry our
-`pending--register' may have installed.  Returning nil lets
-`unload-feature' continue with its standard cleanup of symbols
-defined in this file."
+hooks, cancels the global animation timer and the debounced list
+refresh timer, and walks every live buffer to remove the buffer-local
+`kill-buffer-hook' entry our `pending--register' may have installed.
+Returning nil lets `unload-feature' continue with its standard cleanup
+of symbols defined in this file."
   (remove-hook 'window-buffer-change-functions
                #'pending--on-window-buffer-change)
   (remove-hook 'kill-emacs-query-functions #'pending--kill-emacs-query)
   (when (timerp pending--global-timer)
     (cancel-timer pending--global-timer))
   (setq pending--global-timer nil)
+  (when (timerp pending--list-refresh-timer)
+    (cancel-timer pending--list-refresh-timer)
+    (setq pending--list-refresh-timer nil))
   ;; Strip the buffer-local kill hook from every buffer that still
   ;; carries it.  The check guards against the trivial common case
   ;; where the hook was never installed; only the actual placeholder

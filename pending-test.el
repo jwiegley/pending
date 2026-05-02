@@ -73,16 +73,24 @@ throws."
 Rebinds `pending--registry' to a brand-new hash table, resets
 `pending--next-id' so id counters and registry contents from earlier
 tests cannot leak in, and rebinds `pending--global-timer' so the
-animation timer started by `pending-make' is local to BODY.  The
-timer is cancelled on exit so it cannot fire after BODY returns."
+animation timer started by `pending-make' is local to BODY.  Also
+rebinds `pending--list-refresh-pending' and
+`pending--list-refresh-timer' so a test that leaves the debounced
+refresh flag/timer set cannot bleed into subsequent tests.  The
+animation timer and the list-refresh timer are cancelled on exit
+so neither can fire after BODY returns."
   (declare (indent 0) (debug t))
   `(let ((pending--registry (make-hash-table :test 'eq))
          (pending--next-id 0)
-         (pending--global-timer nil))
+         (pending--global-timer nil)
+         (pending--list-refresh-pending nil)
+         (pending--list-refresh-timer nil))
      (unwind-protect
          (progn ,@body)
        (when (timerp pending--global-timer)
-         (cancel-timer pending--global-timer)))))
+         (cancel-timer pending--global-timer))
+       (when (timerp pending--list-refresh-timer)
+         (cancel-timer pending--list-refresh-timer)))))
 
 (defvar pending-test--clock 0.0
   "Mocked wall-clock value for `pending-test--with-mocked-time'.
