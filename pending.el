@@ -542,12 +542,32 @@ emptied as a result of this removal."
     (pending--park-timer))
   (pending--list-refresh-if-live))
 
+(defvar pending--inhibit-on-modify nil
+  "Non-nil suppresses `pending--on-modify' for library-internal mutations.
+Bound to t around the library's own buffer modifications (resolve,
+stream insert, stream finish) so the cancel-on-collapse path does
+not fire on the library's own delete+insert.
+
+Earlier versions bound `inhibit-modification-hooks' for the same
+purpose, but that variable also silences global change hooks such as
+`before-change-functions' and `after-change-functions', which
+`org-element--cache' (and font-lock, undo, and any other
+buffer-watching system) rely on to stay synchronised with buffer
+text.  Suppressing those caused org-element to emit \"Invalid search
+bound (wrong side of point)\" warnings after a placeholder resolved
+inside an `org-mode' buffer.  This flag suppresses only this
+library's own overlay hook; external hooks fire normally.")
+
 (defun pending--swap-region (p new-text)
   "Atomically replace P's region with NEW-TEXT.
 The replacement is wrapped in an `atomic-change-group' so undo sees
-exactly one step.  `inhibit-read-only' and `inhibit-modification-hooks'
-are bound around the swap so neither this library's own read-only
-enforcement nor its modification hooks fight the operation.
+exactly one step.  `inhibit-read-only' is bound so this library's own
+read-only enforcement does not block the swap, and the per-package
+`pending--inhibit-on-modify' flag is bound so the overlay's
+cancel-on-collapse hook does not fire on the library's own
+delete+insert.  Global change hooks (`before-change-functions',
+`after-change-functions') run normally so external systems such as
+`org-element--cache', `font-lock', and undo stay in sync.
 
 NEW-TEXT is inserted as plain buffer text without any `face' property:
 the placeholder library never adds a face to text it inserts itself.
@@ -567,7 +587,7 @@ selects a window or pops to a buffer as part of resolution."
       (with-current-buffer buf
         (atomic-change-group
           (let ((inhibit-read-only t)
-                (inhibit-modification-hooks t)
+                (pending--inhibit-on-modify t)
                 (start (marker-position (pending-start p)))
                 (end (marker-position (pending-end p))))
             (when (and start end)
@@ -727,14 +747,14 @@ fact.
 
 Wired onto OV's `modification-hooks', `insert-in-front-hooks', and
 `insert-behind-hooks' by `pending-make'.  Suppressed during the
-library's own atomic resolve via the `inhibit-modification-hooks'
-binding in `pending--swap-region', so the cancel-on-collapse path
-fires only for user-initiated edits.
+library's own atomic resolve via the `pending--inhibit-on-modify'
+binding in `pending--swap-region' (and the streaming inserts), so the
+cancel-on-collapse path fires only for user-initiated edits.
 
 Cancels the pending placeholder with reason `:buffer-killed' when its
 buffer has been killed, or `:region-deleted' when the overlay has
 collapsed to zero length (the user has removed the entire region)."
-  (when after
+  (when (and after (not pending--inhibit-on-modify))
     (let ((p (overlay-get ov 'pending)))
       (when p
         (cond
@@ -1377,8 +1397,10 @@ position falls outside BUFFER's bounds."
       ;; Modification hooks fire on user edits inside the region or at
       ;; its edges.  They detect the "user deleted the placeholder"
       ;; case and auto-cancel with `:region-deleted'.
-      ;; `pending--swap-region' binds `inhibit-modification-hooks' so
-      ;; the library's own resolve does not retrigger them.
+      ;; `pending--swap-region' binds `pending--inhibit-on-modify' so
+      ;; the library's own resolve does not retrigger them, while
+      ;; leaving global change hooks (used by `org-element--cache',
+      ;; `font-lock', etc.) free to fire.
       (overlay-put ov 'modification-hooks '(pending--on-modify))
       (overlay-put ov 'insert-in-front-hooks '(pending--on-modify))
       (overlay-put ov 'insert-behind-hooks '(pending--on-modify))
@@ -1543,9 +1565,11 @@ TEXT is inserted as plain buffer text with no `face' property — the
 library never faces text it inserts itself.
 
 The replacement happens inside an `atomic-change-group' so undo sees
-one step, with `inhibit-read-only' and `inhibit-modification-hooks'
-bound during the swap.  Side effects: removes the overlay, clears
-markers, unregisters P, cancels its deadline timer, and runs the
+one step, with `inhibit-read-only' bound to allow library-internal
+edits and `pending--inhibit-on-modify' bound so the overlay's
+cancel-on-collapse hook does not fire on the library's own
+delete+insert.  Side effects: removes the overlay, clears markers,
+unregisters P, cancels its deadline timer, and runs the
 `on-resolve' callback once (errors there are caught and warned)."
   (pending--resolve-internal p :resolved nil text t))
 
@@ -1688,7 +1712,7 @@ CHUNK must be a string; an empty string is a no-op.  Signals
             ;; replaced by the first arriving chunk of real content.
             (when first-chunk-p
               (let ((inhibit-read-only t)
-                    (inhibit-modification-hooks t)
+                    (pending--inhibit-on-modify t)
                     (start (marker-position (pending-start p)))
                     (end (marker-position (pending-end p))))
                 (when (and start end (< start end))
@@ -1697,11 +1721,13 @@ CHUNK must be a string; an empty string is a no-op.  Signals
               (setf (pending-status p) :streaming)))
           ;; Insert at the end marker.  With insertion-type t the
           ;; marker advances past the inserted text on its own.
-          ;; `inhibit-modification-hooks' prevents `pending--on-modify'
-          ;; from firing on this library-internal insert.  No `face'
-          ;; property: the library never faces text it inserts itself.
+          ;; `pending--inhibit-on-modify' prevents `pending--on-modify'
+          ;; from firing on this library-internal insert; global change
+          ;; hooks (`org-element--cache', `font-lock', etc.) still fire.
+          ;; No `face' property: the library never faces text it
+          ;; inserts itself.
           (let ((inhibit-read-only t)
-                (inhibit-modification-hooks t))
+                (pending--inhibit-on-modify t))
             (save-excursion
               (goto-char (pending-end p))
               (insert (propertize chunk
@@ -1773,7 +1799,7 @@ clobbering the reason or firing the wrong callback."
         (with-current-buffer buf
           (set-marker-insertion-type (pending-end p) nil)
           (let ((inhibit-read-only t)
-                (inhibit-modification-hooks t)
+                (pending--inhibit-on-modify t)
                 (start (marker-position (pending-start p)))
                 (end (marker-position (pending-end p))))
             (when (and start end)

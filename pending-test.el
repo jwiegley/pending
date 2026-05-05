@@ -846,6 +846,113 @@ call `pending-cancel' with `:region-deleted'.  The user's
           (should (eq (pending-reason p) :region-deleted))
           (should flag))))))
 
+(ert-deftest pending-test/finish-fires-buffer-change-hooks ()
+  "`pending-finish' must fire global change hooks during its swap.
+External systems (notably `org-element--cache') rely on
+`before-change-functions' / `after-change-functions' to keep
+their state in sync with buffer text; suppressing them via
+`inhibit-modification-hooks' caused org-element to emit \"Invalid
+search bound (wrong side of point)\" warnings after a placeholder
+resolved inside an `org-mode' buffer.  The library now uses
+`pending--inhibit-on-modify', which gates only its own overlay
+hook and leaves the global hooks intact."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-change-hooks-finish*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "loading"))
+              (before-fired nil)
+              (after-fired nil))
+          (add-hook 'before-change-functions
+                    (lambda (_b _e) (setq before-fired t))
+                    nil 'local)
+          (add-hook 'after-change-functions
+                    (lambda (_b _e _l) (setq after-fired t))
+                    nil 'local)
+          (pending-finish p "done")
+          (should before-fired)
+          (should after-fired))))))
+
+(ert-deftest pending-test/cancel-fires-buffer-change-hooks ()
+  "`pending-cancel' likewise fires global change hooks during the swap."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-change-hooks-cancel*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "loading"))
+              (before-fired nil)
+              (after-fired nil))
+          (add-hook 'before-change-functions
+                    (lambda (_b _e) (setq before-fired t))
+                    nil 'local)
+          (add-hook 'after-change-functions
+                    (lambda (_b _e _l) (setq after-fired t))
+                    nil 'local)
+          (pending-cancel p :test-cleanup)
+          (should before-fired)
+          (should after-fired))))))
+
+(ert-deftest pending-test/reject-fires-buffer-change-hooks ()
+  "`pending-reject' likewise fires global change hooks during the swap."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-change-hooks-reject*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "loading"))
+              (before-fired nil)
+              (after-fired nil))
+          (add-hook 'before-change-functions
+                    (lambda (_b _e) (setq before-fired t))
+                    nil 'local)
+          (add-hook 'after-change-functions
+                    (lambda (_b _e _l) (setq after-fired t))
+                    nil 'local)
+          (pending-reject p :test-cleanup "failed")
+          (should before-fired)
+          (should after-fired))))))
+
+(ert-deftest pending-test/stream-fires-buffer-change-hooks ()
+  "Streaming sites must also fire global change hooks.
+Covers the three streaming code paths that previously bound
+`inhibit-modification-hooks': the first-chunk delete that strips
+the loading label, the per-chunk insert at the end marker, and
+the property-strip in `pending-stream-finish'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-change-hooks-stream*")
+      (with-current-buffer buf
+        (let ((p (pending-make buf :label "loading"))
+              (before-count 0)
+              (after-count 0))
+          (add-hook 'before-change-functions
+                    (lambda (_b _e) (cl-incf before-count))
+                    nil 'local)
+          (add-hook 'after-change-functions
+                    (lambda (_b _e _l) (cl-incf after-count))
+                    nil 'local)
+          (pending-stream-insert p "first")
+          (pending-stream-insert p "second")
+          (pending-stream-finish p)
+          (should (> before-count 0))
+          (should (> after-count 0)))))))
+
+(ert-deftest pending-test/internal-mod-flag-suppresses-on-modify ()
+  "Binding `pending--inhibit-on-modify' makes `pending--on-modify' a no-op.
+This is the mechanism by which the library's own delete+insert
+during resolve does not retrigger the cancel-on-collapse path.
+Replaces the earlier mechanism (binding
+`inhibit-modification-hooks'), which also silenced unrelated
+global hooks such as those used by `org-element--cache'."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-internal-mod-flag*")
+      (with-current-buffer buf
+        (insert "X")
+        (let ((p (pending-make buf :label "MID")))
+          (insert "Y")
+          (let ((s (overlay-start (pending-region p)))
+                (e (overlay-end (pending-region p)))
+                (inhibit-read-only t)
+                (pending--inhibit-on-modify t))
+            (delete-region s e))
+          (should-not (eq (pending-status p) :cancelled))
+          (pending-cancel p :test-cleanup))))))
+
 (ert-deftest pending-test/markers-survive-edit-before ()
   "Inserting text BEFORE the placeholder shifts markers but doesn't break them.
 Both `pending-start' and `pending-end' are markers anchored on the
