@@ -555,7 +555,13 @@ Highlighting only ever appears as the overlay's `face' property when
 the overlay covers EXISTING buffer text (adopt mode with BEG < END).
 
 The end marker is left pointing at the position immediately after the
-inserted text."
+inserted text.
+
+Point and the selected window are not changed by this operation: the
+delete-then-insert is wrapped in `save-excursion' so the user's cursor
+stays where it was (with the natural shift induced by the buffer-text
+edit) instead of jumping to the resolved text.  The library never
+selects a window or pops to a buffer as part of resolution."
   (let ((buf (pending-buffer p)))
     (when (buffer-live-p buf)
       (with-current-buffer buf
@@ -565,10 +571,11 @@ inserted text."
                 (start (marker-position (pending-start p)))
                 (end (marker-position (pending-end p))))
             (when (and start end)
-              (delete-region start end)
-              (goto-char start)
-              (insert (or new-text ""))
-              (set-marker (pending-end p) (point)))))))))
+              (save-excursion
+                (delete-region start end)
+                (goto-char start)
+                (insert (or new-text ""))
+                (set-marker (pending-end p) (point))))))))))
 
 (defun pending--maybe-pulse (buffer start end)
   "Briefly highlight BUFFER's region [START, END] via `pulse.el'.

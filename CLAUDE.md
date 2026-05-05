@@ -40,7 +40,7 @@ NOT treat them as errors. Real Emacs/Eask output appears after them.
 # Byte-compile (must stay warning-free)
 load-env-emacs30MacPort eask compile
 
-# Run the full ERT suite (currently 121 tests across pending-test.el and
+# Run the full ERT suite (currently 123 tests across pending-test.el and
 # pending-aio-test.el)
 load-env-emacs30MacPort eask test ert pending-test.el pending-aio-test.el
 make test                        # equivalent

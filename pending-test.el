@@ -1507,6 +1507,50 @@ the demo buffer so leftover timers cannot fire after the test ends."
           (should (eq (pending-status token) :resolved))
           (should (string-match-p "HNEWello world" (buffer-string))))))))
 
+(ert-deftest pending-test/resolve-preserves-point ()
+  "`pending-finish' does not move point in the placeholder's buffer.
+When the user's cursor sits outside the placeholder, resolution must
+not jump it to the end of the inserted text — it should track the
+same logical character it was on, shifted only by the natural
+delete-then-insert of the swap."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-resolve-keeps-point*")
+      (with-current-buffer buf
+        (insert "ABCDEF")
+        ;; Adopt the middle two chars 'CD' as a placeholder, then move
+        ;; point AFTER the placeholder (between E and F).  Resolving
+        ;; with longer text 'XYZ' must leave point logically between
+        ;; E and F in the resulting "ABXYZEF".
+        (let* ((beg (+ (point-min) 2))   ; before C
+               (end (+ (point-min) 4))   ; before E
+               (token (pending-region beg end "CD")))
+          (goto-char (+ (point-min) 5))  ; between E and F
+          (pending-finish token "XYZ")
+          (should (eq (pending-status token) :resolved))
+          (should (string= (buffer-string) "ABXYZEF"))
+          ;; "ABXYZEF": A=1 B=2 X=3 Y=4 Z=5 E=6 F=7 — between E and F
+          ;; is position 7.
+          (should (= (point) (+ (point-min) 6))))))))
+
+(ert-deftest pending-test/resolve-preserves-window-and-buffer ()
+  "Resolution does not change the selected window or selected buffer.
+The library has no business stealing focus when an async result lands."
+  (pending-test--with-fresh-registry
+    (pending-test--with-buffer (buf "*p-resolve-keeps-window*")
+      (pending-test--with-buffer (other "*p-resolve-other*")
+        (with-current-buffer buf
+          (insert "Before-OLD-After")
+          (let* ((beg (+ (point-min) 7))
+                 (end (+ (point-min) 10))
+                 (token (pending-region beg end "OLD")))
+            ;; Switch to a different buffer; the resolve should not
+            ;; pull us back to BUF.
+            (set-buffer other)
+            (let ((win-before (selected-window)))
+              (pending-finish token "NEW")
+              (should (eq (current-buffer) other))
+              (should (eq (selected-window) win-before)))))))))
+
 (ert-deftest pending-test/goto-jumps-to-start ()
   "`pending-goto' moves point to TOKEN's start position."
   (pending-test--with-fresh-registry
