@@ -569,9 +569,10 @@ delete+insert.  Global change hooks (`before-change-functions',
 `after-change-functions') run normally so external systems such as
 `org-element--cache', `font-lock', and undo stay in sync.
 
-NEW-TEXT is inserted as plain buffer text without any `face' property:
-the placeholder library never adds a face to text it inserts itself.
-Highlighting only ever appears as the overlay's `face' property when
+Call NEW-TEXT if it is a function so that it can insert the resolved text into
+the buffer. Otherwise, NEW-TEXT is inserted as plain buffer text without any
+`face' property: the placeholder library never adds a face to text it inserts
+itself.  Highlighting only ever appears as the overlay's `face' property when
 the overlay covers EXISTING buffer text (adopt mode with BEG < END).
 
 The end marker is left pointing at the position immediately after the
@@ -594,7 +595,9 @@ selects a window or pops to a buffer as part of resolution."
               (save-excursion
                 (delete-region start end)
                 (goto-char start)
-                (insert (or new-text ""))
+                (if (functionp new-text)
+                    (funcall new-text)
+                  (insert (or new-text "")))
                 (set-marker (pending-end p) (point))))))))))
 
 (defun pending--maybe-pulse (buffer start end)
@@ -639,10 +642,11 @@ Steps:
      (re-entrant guard) or if P is already in a terminal state.
   2. Set P's status, REASON-derived reason slot, and resolved-at.
   3. Unless NO-SWAP, replace the placeholder region with NEW-TEXT
-     (plain text, no face) via `pending--swap-region'.  The NO-SWAP
-     branch is used by `pending-stream-finish', which has already
-     written the streamed content into the buffer and only needs the
-     bookkeeping half of the resolve.
+     (funcallable value or plain text, no face) via
+     `pending--swap-region'.  The NO-SWAP branch is used by
+     `pending-stream-finish', which has already written the streamed
+     content into the buffer and only needs the bookkeeping half of
+     the resolve.
   4. Unregister P from both registries (also cancels P's deadline
      timer if any).
   5. Delete P's overlay and clear its markers.
